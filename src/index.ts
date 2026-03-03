@@ -23,13 +23,14 @@ console.log({
   attachPort: config.attachPort,
 });
 
-const app = createApp(config);
+const { app, sessionManager } = createApp(config);
 
 await app.start();
 console.log("Bot running");
 
 process.on("SIGINT", async () => {
   console.log("\nShutting down...");
+  await sessionManager.disposeAll();
   await app.stop();
   process.exit(0);
 });
