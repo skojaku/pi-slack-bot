@@ -55,6 +55,8 @@ function makeCtx(overrides: Partial<CommandContext> = {}): CommandContext {
 
   const sessionManager = {
     list: mock.fn(() => []),
+    dispose: mock.fn(async () => {}),
+    getOrCreate: mock.fn(async () => makeSession()),
   } as any;
 
   return {
@@ -84,6 +86,8 @@ function makeSession(overrides: Record<string, any> = {}) {
     newSession: mock.fn(async () => {}),
     setModel: mock.fn(async () => {}),
     setThinkingLevel: mock.fn(),
+    enqueue: mock.fn((fn: () => Promise<void>) => fn()),
+    prompt: mock.fn(async () => {}),
     ...overrides,
   } as any;
 }
@@ -264,12 +268,12 @@ describe("!cwd", () => {
     mkdirSync(tmpDir, { recursive: true });
   });
 
-  it("changes cwd to valid directory", async () => {
+  it("changes cwd by creating new session", async () => {
     const session = makeSession();
     const ctx = makeCtx({ session });
     await dispatchCommand("cwd", tmpDir, ctx);
-    assert.equal(session.cwd, tmpDir);
-    assert.ok(getPosted(ctx)[0].includes("CWD set to"));
+    assert.ok(getPosted(ctx)[0].includes("New session"));
+    assert.ok(getPosted(ctx)[0].includes(tmpDir));
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
@@ -286,24 +290,38 @@ describe("!cwd", () => {
     const ctx = makeCtx({ session });
     await dispatchCommand("cwd", "/nonexistent/path/xyz", ctx);
     assert.ok(getPosted(ctx)[0].includes("Not a valid directory"));
-    assert.equal(session.cwd, "/workspace/project"); // unchanged
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("replies no active session when none exists", async () => {
+  it("shows current cwd when no session and no args", async () => {
+    const ctx = makeCtx();
+    await dispatchCommand("cwd", "", ctx);
+    assert.ok(getPosted(ctx)[0].includes("No active session"));
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("creates session even with no prior session", async () => {
     const ctx = makeCtx();
     await dispatchCommand("cwd", tmpDir, ctx);
-    assert.ok(getPosted(ctx)[0].includes("No active session"));
+    assert.ok(getPosted(ctx)[0].includes("New session"));
     rmSync(tmpDir, { recursive: true, force: true });
   });
 });
 
 describe("unknown command", () => {
-  it("replies with unknown command message", async () => {
+  it("forwards unknown command to session when session exists", async () => {
+    const session = makeSession();
+    const ctx = makeCtx({ session });
+    const result = await dispatchCommand("foobar", "some args", ctx);
+    assert.equal(result, true);
+    // Should have enqueued a prompt
+    assert.equal(session.enqueue.mock.callCount(), 1);
+  });
+
+  it("replies no active session when no session exists", async () => {
     const ctx = makeCtx();
     const result = await dispatchCommand("foobar", "", ctx);
     assert.equal(result, false);
-    assert.ok(getPosted(ctx)[0].includes("Unknown command"));
-    assert.ok(getPosted(ctx)[0].includes("!help"));
+    assert.ok(getPosted(ctx)[0].includes("No active session"));
   });
 });

@@ -1,0 +1,9 @@
+{
+  "name": "pi-slack-attach",
+  "version": "0.1.0",
+  "description": "Pi extension to attach a local session to a Slack DM thread via pi-slack-bot",
+  "type": "module",
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}

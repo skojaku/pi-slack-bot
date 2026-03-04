@@ -74,7 +74,7 @@ export function loadConfig(): Config {
     sessionDir: expandHome(optional("SESSION_DIR", "~/.pi-slack-bot/sessions")),
 
     streamThrottleMs: optionalInt("STREAM_THROTTLE_MS", 3000),
-    slackMsgLimit: optionalInt("SLACK_MSG_LIMIT", 3900),
+    slackMsgLimit: optionalInt("SLACK_MSG_LIMIT", 3000),
 
     workspaceDirs: optional("WORKSPACE_DIRS", "~/workplace")
       .split(",")

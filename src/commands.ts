@@ -4,6 +4,7 @@ import type { WebClient } from "@slack/web-api";
 import type { ThreadSession } from "./thread-session.js";
 import type { BotSessionManager, ThreadSessionInfo } from "./session-manager.js";
 import type { ThinkingLevel } from "./config.js";
+import { postRalphPicker, postPromptPicker } from "./command-picker.js";
 
 const VALID_THINKING_LEVELS: ThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh"];
 
@@ -37,6 +38,11 @@ const handlers: Record<string, CommandHandler> = {
       "`!thinking <level>` — Set thinking level (off, minimal, low, medium, high, xhigh)",
       "`!sessions` — List active sessions",
       "`!cwd <path>` — Change working directory",
+      "`!reload` — Reload extensions and prompt templates",
+      "`!ralph [preset] [prompt]` — Start a Ralph loop (shows preset picker if no args)",
+      "`!prompt [name]` — Run a prompt template (shows picker if no args)",
+      "",
+      "Any other `!command` is forwarded to pi as `/command` (extensions & prompt templates).",
     ];
     await reply(ctx, lines.join("\n"));
   },
@@ -120,13 +126,13 @@ const handlers: Record<string, CommandHandler> = {
   },
 
   async cwd(ctx, args) {
-    if (!ctx.session) {
-      await reply(ctx, "No active session.");
-      return;
-    }
     const target = args.trim();
     if (!target) {
-      await reply(ctx, `Current cwd: \`${ctx.session.cwd}\``);
+      if (!ctx.session) {
+        await reply(ctx, "No active session.");
+      } else {
+        await reply(ctx, `Current cwd: \`${ctx.session.cwd}\``);
+      }
       return;
     }
     const resolved = resolve(target);
@@ -134,8 +140,57 @@ const handlers: Record<string, CommandHandler> = {
       await reply(ctx, `❌ Not a valid directory: \`${resolved}\``);
       return;
     }
-    ctx.session.cwd = resolved;
-    await reply(ctx, `📂 CWD set to \`${resolved}\`.`);
+
+    // Tear down old session and create a new one so the ResourceLoader,
+    // AGENTS.md, project .pi/ extensions & prompts all pick up the new cwd.
+    if (ctx.session) {
+      await ctx.sessionManager.dispose(ctx.threadTs);
+    }
+    const session = await ctx.sessionManager.getOrCreate({
+      threadTs: ctx.threadTs,
+      channelId: ctx.channel,
+      cwd: resolved,
+    });
+    await reply(ctx, `📂 New session in \`${resolved}\`. Project AGENTS.md, extensions, and prompts loaded.`);
+  },
+
+  async reload(ctx) {
+    if (!ctx.session) {
+      await reply(ctx, "No active session.");
+      return;
+    }
+    await ctx.session.reload();
+    await reply(ctx, "🔄 Extensions and prompt templates reloaded.");
+  },
+
+  async ralph(ctx, args) {
+    if (!ctx.session) {
+      await reply(ctx, "No active session. Send a message first to start one.");
+      return;
+    }
+    const trimmed = args.trim();
+    if (trimmed) {
+      // Forward directly: !ralph feature build X → /ralph feature build X
+      ctx.session.enqueue(() => ctx.session!.prompt(`/ralph ${trimmed}`));
+    } else {
+      // No args — show preset picker buttons
+      await postRalphPicker(ctx.client, ctx.channel, ctx.threadTs, ctx.session);
+    }
+  },
+
+  async prompt(ctx, args) {
+    if (!ctx.session) {
+      await reply(ctx, "No active session. Send a message first to start one.");
+      return;
+    }
+    const trimmed = args.trim();
+    if (trimmed) {
+      // Forward directly: !prompt review → /review
+      ctx.session.enqueue(() => ctx.session!.prompt(`/${trimmed}`));
+    } else {
+      // No args — show template picker buttons
+      await postPromptPicker(ctx.client, ctx.channel, ctx.threadTs, ctx.session);
+    }
   },
 };
 
@@ -156,7 +211,8 @@ export function parseCommand(text: string): { name: string; args: string } | nul
 }
 
 /**
- * Dispatch a parsed command. Returns true if handled, false if unknown command.
+ * Dispatch a parsed command. Returns true if handled, false if unknown.
+ * Unknown commands are forwarded to the pi session as /command.
  */
 export async function dispatchCommand(
   name: string,
@@ -164,10 +220,18 @@ export async function dispatchCommand(
   ctx: CommandContext,
 ): Promise<boolean> {
   const handler = handlers[name];
-  if (!handler) {
-    await reply(ctx, `Unknown command: \`!${name}\`. Try \`!help\`.`);
-    return false;
+  if (handler) {
+    await handler(ctx, args);
+    return true;
   }
-  await handler(ctx, args);
-  return true;
+
+  // Unknown bot command → forward to pi session as /command
+  if (ctx.session) {
+    const piCommand = args ? `/${name} ${args}` : `/${name}`;
+    ctx.session.enqueue(() => ctx.session!.prompt(piCommand));
+    return true;
+  }
+
+  await reply(ctx, `No active session. Send a message first to start one, then use \`!${name}\`.`);
+  return false;
 }

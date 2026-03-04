@@ -179,8 +179,9 @@ describe("StreamingUpdater", () => {
     await new Promise((r) => realSetTimeout(r, 10));
 
     const text2 = client.chat.update.mock.calls[1].arguments[0].text;
-    assert.ok(text2.includes("✅"), "should contain success icon");
-    assert.ok(!text2.includes("🔧"), "wrench should be replaced");
+    assert.ok(text2.includes("✅"), "should contain success summary");
+    assert.ok(!text2.includes("🔧"), "wrench should be gone");
+    assert.ok(!text2.includes("read_file"), "individual tool name should be collapsed into summary");
   });
 
   it("tool start triggers immediate flush bypassing throttle timer", async () => {
@@ -223,8 +224,8 @@ describe("StreamingUpdater", () => {
     await new Promise((r) => realSetTimeout(r, 10));
     assert.equal(client.chat.update.mock.callCount(), 2);
     const text = client.chat.update.mock.calls[1].arguments[0].text;
-    assert.ok(text.includes("❌"), "should contain error icon");
-    assert.ok(!text.includes("🔧"), "wrench should be replaced");
+    assert.ok(text.includes("failed"), "should mention failed tools");
+    assert.ok(!text.includes("🔧"), "wrench should be gone");
   });
 
   it("tool lines appear after text content in flushed output", async () => {
@@ -332,5 +333,88 @@ describe("StreamingUpdater", () => {
     const checkmarkCall = addCalls[addCalls.length - 1].arguments[0];
     assert.equal(checkmarkCall.timestamp, "msg-1");
     assert.equal(checkmarkCall.name, "white_check_mark");
+  });
+
+  it("retries with lower limit on msg_too_long from chat.update", async () => {
+    const client = makeClient();
+    let updateAttempt = 0;
+    client.chat.update = mock.fn(async (args: any) => {
+      updateAttempt++;
+      // Fail on first attempt, succeed on retry
+      if (updateAttempt === 1) {
+        const err = new Error("An API error occurred: msg_too_long");
+        (err as any).data = { error: "msg_too_long" };
+        throw err;
+      }
+      return {};
+    });
+
+    let postCount = 0;
+    client.chat.postMessage = mock.fn(async () => ({ ts: `msg-${++postCount}` }));
+
+    const updater = new StreamingUpdater(client, 3000, 200);
+    const state = await updater.begin("C1", "ts1");
+
+    updater.appendText(state, "A".repeat(150));
+
+    await updater.finalize(state);
+
+    // Should have retried with a smaller limit
+    assert.ok(updateAttempt >= 2, `expected retry, got ${updateAttempt} attempts`);
+  });
+
+  it("subsequent flushes after split update in-place instead of posting new messages", async () => {
+    const client = makeClient();
+    let postCount = 0;
+    client.chat.postMessage = mock.fn(async () => ({ ts: `msg-${++postCount}` }));
+
+    const updater = new StreamingUpdater(client, 3000, 100);
+    const state = await updater.begin("C1", "ts1");
+
+    // First flush: content exceeds limit, splits into 2 chunks
+    const para1 = "A".repeat(60);
+    const para2 = "B".repeat(60);
+    updater.appendText(state, `${para1}\n\n${para2}`);
+    flushTimers();
+    await new Promise((r) => realSetTimeout(r, 10));
+
+    const postCountAfterFirst = client.chat.postMessage.mock.callCount();
+    const updateCountAfterFirst = client.chat.update.mock.callCount();
+
+    // Second flush: append more text, still splits into 2 chunks
+    updater.appendText(state, " more");
+    flushTimers();
+    await new Promise((r) => realSetTimeout(r, 10));
+
+    // Should have used chat.update for BOTH existing messages, no new postMessage
+    assert.equal(
+      client.chat.postMessage.mock.callCount(),
+      postCountAfterFirst,
+      "should NOT post new messages on subsequent flush — should update in place",
+    );
+    assert.ok(
+      client.chat.update.mock.callCount() > updateCountAfterFirst,
+      "should update existing messages",
+    );
+
+    // Verify both messages are updated (msg-1 and msg-2)
+    const updateCalls = client.chat.update.mock.calls;
+    const lastTwoUpdates = updateCalls.slice(-2);
+    const updatedTimestamps = lastTwoUpdates.map((c: any) => c.arguments[0].ts);
+    assert.ok(updatedTimestamps.includes("msg-1"), "should update the initial message");
+    assert.ok(updatedTimestamps.includes("msg-2"), "should update the continuation message");
+  });
+
+  it("error() truncates very long error messages", async () => {
+    const client = makeClient();
+    const updater = new StreamingUpdater(client, 3000, 100);
+    const state = await updater.begin("C1", "ts1");
+
+    const longMsg = "X".repeat(5000);
+    await updater.error(state, new Error(longMsg));
+
+    const errCall = client.chat.postMessage.mock.calls[1].arguments[0];
+    assert.ok(errCall.text.length < 200, `error text should be truncated, got ${errCall.text.length}`);
+    assert.ok(errCall.text.endsWith("..."), "should end with ...");
   });
 });

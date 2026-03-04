@@ -1,9 +1,10 @@
 import path from "path";
-import { createAgentSession, createCodingTools, SessionManager as PiSessionManager } from "@mariozechner/pi-coding-agent";
-import type { AgentSession, AgentSessionEvent, AgentSessionEventListener } from "@mariozechner/pi-coding-agent";
+import { createAgentSession, createCodingTools, DefaultResourceLoader, SessionManager as PiSessionManager } from "@mariozechner/pi-coding-agent";
+import type { AgentSession, AgentSessionEvent, AgentSessionEventListener, PromptTemplate } from "@mariozechner/pi-coding-agent";
 import type { WebClient } from "@slack/web-api";
 import type { Config, ThinkingLevel } from "./config.js";
 import { StreamingUpdater } from "./streaming-updater.js";
+import { createFilePickerTool, type FilePickerContext } from "./file-picker.js";
 
 export interface ThreadSessionCreateParams {
   threadTs: string;
@@ -21,6 +22,7 @@ export class ThreadSession {
   lastActivity: Date;
 
   private _agentSession: AgentSession;
+  private _resourceLoader: DefaultResourceLoader;
   private _client: WebClient;
   private _updater: StreamingUpdater;
   private _tasks: Array<() => Promise<void>> = [];
@@ -32,6 +34,7 @@ export class ThreadSession {
     cwd: string,
     client: WebClient,
     agentSession: AgentSession,
+    resourceLoader: DefaultResourceLoader,
     updater: StreamingUpdater,
   ) {
     this.threadTs = threadTs;
@@ -39,6 +42,7 @@ export class ThreadSession {
     this.cwd = cwd;
     this._client = client;
     this._agentSession = agentSession;
+    this._resourceLoader = resourceLoader;
     this._updater = updater;
     this.lastActivity = new Date();
   }
@@ -47,11 +51,39 @@ export class ThreadSession {
     const sessionFilePath = path.join(params.sessionDir, `${params.threadTs}.jsonl`);
     const piSessionManager = PiSessionManager.open(sessionFilePath);
 
+    // DefaultResourceLoader auto-discovers extensions and prompts from ~/.pi/agent/
+    const resourceLoader = new DefaultResourceLoader({ cwd: params.cwd });
+    await resourceLoader.reload();
+
+    // File picker tool needs Slack context; create a getter that returns
+    // the current channel/thread/client (stable for the lifetime of this session).
+    const filePickerContext: FilePickerContext = {
+      client: params.client,
+      channelId: params.channelId,
+      threadTs: params.threadTs,
+    };
+    const filePickerTool = createFilePickerTool(params.cwd, () => filePickerContext);
+
     const { session } = await createAgentSession({
       cwd: params.cwd,
       sessionManager: piSessionManager,
       tools: createCodingTools(params.cwd),
+      customTools: [filePickerTool],
+      resourceLoader,
     });
+
+    // Find and set the model from config (provider/model from .env)
+    const registry = session.modelRegistry;
+    const allModels = registry.getAll();
+    const model = allModels.find(
+      (m) => m.provider === params.config.provider && m.id === params.config.model,
+    ) ?? allModels.find(
+      (m) => m.provider === params.config.provider,
+    );
+    if (model) {
+      await session.setModel(model);
+      session.setThinkingLevel(params.config.thinkingLevel);
+    }
 
     const updater = new StreamingUpdater(params.client, params.config.streamThrottleMs);
 
@@ -61,6 +93,7 @@ export class ThreadSession {
       params.cwd,
       params.client,
       session,
+      resourceLoader,
       updater,
     );
   }
@@ -85,6 +118,11 @@ export class ThreadSession {
   }
 
   async prompt(text: string): Promise<void> {
+    // Rewrite !command → /command for pi extension commands & prompt templates.
+    // Bot-level commands (help, model, etc.) are intercepted before reaching here,
+    // so only pi commands (pdd, ralph, review, etc.) arrive at this point.
+    const piText = text.replace(/^!/, "/");
+
     const state = await this._updater.begin(this.channelId, this.threadTs);
 
     const unsub = this._agentSession.subscribe((event) => {
@@ -101,7 +139,7 @@ export class ThreadSession {
     });
 
     try {
-      await this._agentSession.prompt(text);
+      await this._agentSession.prompt(piText);
       await this._updater.finalize(state);
     } catch (err) {
       await this._updater.error(state, err instanceof Error ? err : new Error(String(err)));
@@ -120,6 +158,13 @@ export class ThreadSession {
 
   async newSession(): Promise<void> {
     await this._agentSession.newSession();
+  }
+
+  async reload(): Promise<void> {
+    // Re-discovers extensions and prompts from disk at the original cwd.
+    // Note: project-local .pi/ discovery is bound to the cwd set at session
+    // creation. Use !new after !cwd to pick up a different project's .pi/.
+    await this._resourceLoader.reload();
   }
 
   get isStreaming(): boolean {
@@ -156,5 +201,10 @@ export class ThreadSession {
 
   subscribe(handler: AgentSessionEventListener): () => void {
     return this._agentSession.subscribe(handler);
+  }
+
+  /** Available file-based prompt templates (e.g. /review, /test, /explain). */
+  get promptTemplates(): ReadonlyArray<PromptTemplate> {
+    return this._agentSession.promptTemplates;
   }
 }

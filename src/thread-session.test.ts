@@ -40,7 +40,7 @@ function makeMockUpdater() {
 function makeSession(agentSession = makeMockAgentSession(), updater = makeMockUpdater()) {
   const client = { chat: { postMessage: mock.fn(async () => ({ ts: "1" })) } } as any;
   return {
-    session: new ThreadSession("ts1", "C1", "/tmp", client, agentSession as any, updater as any),
+    session: new ThreadSession("ts1", "C1", "/tmp", client, agentSession as any, {} as any, updater as any),
     client,
     agentSession,
     updater,

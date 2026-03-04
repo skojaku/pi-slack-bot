@@ -19,7 +19,7 @@ export function markdownToMrkdwn(markdown: string, partial?: boolean): string {
  * Split priority: paragraph break > line break > space > hard cut.
  * Never splits inside a code block (counts ``` pairs).
  */
-export function splitMrkdwn(mrkdwn: string, limit = 3900): string[] {
+export function splitMrkdwn(mrkdwn: string, limit = 3000): string[] {
   if (mrkdwn.length <= limit) return [mrkdwn];
 
   const chunks: string[] = [];
