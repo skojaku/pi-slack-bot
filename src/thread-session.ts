@@ -110,6 +110,38 @@ export class ThreadSession {
       resourceLoader,
     });
 
+    // Bind extensions with a minimal UI context so session_start fires.
+    // This is required for extensions like ralph that load state in session_start.
+    // We cast because ExtensionUIContext has many TUI-only methods we don't need.
+    const noopUiContext = {
+      select: async () => undefined,
+      confirm: async () => false,
+      input: async () => undefined,
+      notify: (message: string, type?: string) => {
+        console.log(`[Extension notify ${type ?? "info"}] ${message}`);
+      },
+      onTerminalInput: () => () => {},
+      setStatus: () => {},
+      setWorkingMessage: () => {},
+      setWidget: () => {},
+      setFooter: () => {},
+      setHeader: () => {},
+      setTitle: () => {},
+      custom: async () => undefined,
+      pasteToEditor: () => {},
+      setEditorText: () => {},
+      getEditorText: () => "",
+      editor: async () => undefined,
+      setCustomEditor: () => {},
+      theme: { fg: (_c: string, t: string) => t, bg: (_c: string, t: string) => t },
+    };
+    await session.bindExtensions({
+      uiContext: noopUiContext as any,
+      onError: (err) => {
+        console.error(`[Extension error] ${err.extensionPath} (${err.event}): ${err.error}`, err.stack ?? "");
+      },
+    });
+
     // Find and set the model from config (provider/model from .env)
     const registry = session.modelRegistry;
     const allModels = registry.getAll();
@@ -162,11 +194,34 @@ export class ThreadSession {
    * including those triggered asynchronously by extensions (e.g., ralph loops).
    */
   private _setupPersistentSubscriber(): void {
+    // Buffer events that arrive before streaming state is ready
+    let pendingEvents: Array<{ type: string; [key: string]: unknown }> = [];
+    let stateReady = false;
+
+    const flushPending = () => {
+      stateReady = true;
+      const state = this._activeStreamState;
+      if (!state) return;
+      for (const event of pendingEvents) {
+        this._dispatchStreamEvent(event as any, state);
+      }
+      pendingEvents = [];
+    };
+
     this._persistentUnsub = this._agentSession.subscribe((event) => {
+      // Log all events for debugging
+      const eventType = (event as any).type;
+      if (!["message_update"].includes(eventType)) {
+        console.log(`[ThreadSession ${this.threadTs}] event: ${eventType}`);
+      }
       if (event.type === "agent_start") {
+        console.log(`[ThreadSession ${this.threadTs}] agent_start`);
+        stateReady = false;
+        pendingEvents = [];
         // A new agent turn is starting — create streaming state
         this._updater.begin(this.channelId, this.threadTs).then((state) => {
           this._activeStreamState = state;
+          flushPending();
         }).catch((err) => {
           console.error(`[ThreadSession ${this.threadTs}] Failed to begin streaming:`, err);
         });
@@ -174,9 +229,12 @@ export class ThreadSession {
       }
 
       if (event.type === "agent_end") {
+        console.log(`[ThreadSession ${this.threadTs}] agent_end`);
         // Agent turn finished — finalize the stream and resolve the turn promise
         const state = this._activeStreamState;
         this._activeStreamState = null;
+        stateReady = false;
+        pendingEvents = [];
         if (state) {
           this._updater.finalize(state).catch((err) => {
             console.error(`[ThreadSession ${this.threadTs}] Failed to finalize streaming:`, err);
@@ -191,21 +249,29 @@ export class ThreadSession {
         return;
       }
 
-      // Delegate streaming events to the active state
+      // If state isn't ready yet, buffer the event
+      if (!stateReady) {
+        pendingEvents.push(event as any);
+        return;
+      }
+
       const state = this._activeStreamState;
       if (!state) return;
-
-      if (
-        event.type === "message_update" &&
-        event.assistantMessageEvent.type === "text_delta"
-      ) {
-        this._updater.appendText(state, event.assistantMessageEvent.delta);
-      } else if (event.type === "tool_execution_start") {
-        this._updater.appendToolStart(state, event.toolName, event.args);
-      } else if (event.type === "tool_execution_end") {
-        this._updater.appendToolEnd(state, event.toolName, event.isError);
-      }
+      this._dispatchStreamEvent(event, state);
     });
+  }
+
+  private _dispatchStreamEvent(event: any, state: import("./streaming-updater.js").StreamingState): void {
+    if (
+      event.type === "message_update" &&
+      event.assistantMessageEvent?.type === "text_delta"
+    ) {
+      this._updater.appendText(state, event.assistantMessageEvent.delta);
+    } else if (event.type === "tool_execution_start") {
+      this._updater.appendToolStart(state, event.toolName, event.args);
+    } else if (event.type === "tool_execution_end") {
+      this._updater.appendToolEnd(state, event.toolName, event.isError);
+    }
   }
 
   async prompt(text: string): Promise<void> {
@@ -222,7 +288,9 @@ export class ThreadSession {
     });
 
     try {
+      console.log(`[ThreadSession ${this.threadTs}] prompt() calling agentSession.prompt("${piText.slice(0, 80)}")`);
       await this._agentSession.prompt(piText);
+      console.log(`[ThreadSession ${this.threadTs}] prompt() returned, isStreaming=${this._agentSession.isStreaming}`);
       // For extension commands that are "handled" immediately (like /ralph),
       // prompt() returns before the agent turn starts. Wait for the first turn to
       // complete, but don't block forever if no turn was started (pure commands).
@@ -240,7 +308,11 @@ export class ThreadSession {
         if (!this._agentSession.isStreaming) {
           // Give extensions a moment to trigger the next turn
           await new Promise((r) => setTimeout(r, 200));
-          if (!this._agentSession.isStreaming) break;
+          if (!this._agentSession.isStreaming) {
+            console.log(`[ThreadSession ${this.threadTs}] prompt() loop: agent idle, exiting`);
+            break;
+          }
+          console.log(`[ThreadSession ${this.threadTs}] prompt() loop: agent started new turn after grace period`);
         }
         await new Promise<void>((resolve) => {
           this._turnCompletePromise = new Promise<void>((r) => {
