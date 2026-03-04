@@ -9,7 +9,11 @@
   "scripts": {
     "start": "node --import tsx/esm src/index.ts",
     "test": "find src -name '*.test.ts' | xargs node --import tsx/esm --test",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "lint": "tsc --noEmit",
+    "audit": "npm audit --omit=dev || true",
+    "coverage": "find src -name '*.test.ts' | xargs node --import tsx/esm --test --experimental-test-coverage",
+    "duplication": "npx -y jscpd --min-lines 10 --min-tokens 50 --threshold 5 src/"
   },
   "dependencies": {
     "@mariozechner/pi-coding-agent": "^0.55.4",
