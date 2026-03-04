@@ -1,5 +1,5 @@
 import type { WebClient } from "@slack/web-api";
-import { markdownToMrkdwn, splitMrkdwn } from "./formatter.js";
+import { markdownToMrkdwn, splitMrkdwn, formatToolStart, formatToolEnd } from "./formatter.js";
 
 export interface StreamingState {
   channelId: string;
@@ -56,21 +56,20 @@ export class StreamingUpdater {
   }
 
   appendToolStart(state: StreamingState, toolName: string, args: unknown): void {
-    const argStr = formatArgs(args);
-    state.toolLines.push(`> 🔧 \`${toolName}\`(${argStr})`);
-    this._scheduleFlush(state);
+    state.toolLines.push(formatToolStart(toolName, args));
+    this._immediateFlush(state);
   }
 
   appendToolEnd(state: StreamingState, toolName: string, isError: boolean): void {
-    const icon = isError ? "❌" : "✅";
+    const endLine = formatToolEnd(toolName, isError);
     // Replace the matching 🔧 line with the result icon
     const idx = state.toolLines.findIndex((l) => l.includes(`\`${toolName}\``) && l.includes("🔧"));
     if (idx !== -1) {
-      state.toolLines[idx] = `> ${icon} \`${toolName}\``;
+      state.toolLines[idx] = endLine;
     } else {
-      state.toolLines.push(`> ${icon} \`${toolName}\``);
+      state.toolLines.push(endLine);
     }
-    this._scheduleFlush(state);
+    this._immediateFlush(state);
   }
 
   appendRetry(state: StreamingState, attempt: number): void {
@@ -119,8 +118,13 @@ export class StreamingUpdater {
     if (state.timer !== null) return;
     state.timer = setTimeout(() => {
       state.timer = null;
-      void this._flush(state, true);
+      this._flush(state, true).catch((err) => console.error("[StreamingUpdater] flush error:", err));
     }, this._throttleMs);
+  }
+
+  private _immediateFlush(state: StreamingState): void {
+    this._cancelTimer(state);
+    this._flush(state, true).catch((err) => console.error("[StreamingUpdater] flush error:", err));
   }
 
   private _cancelTimer(state: StreamingState): void {
@@ -157,18 +161,4 @@ export class StreamingUpdater {
       state.currentMessageTs = res.ts!;
     }
   }
-}
-
-function formatArgs(args: unknown): string {
-  if (args === null || args === undefined) return "";
-  if (typeof args !== "object") return String(args);
-  const entries = Object.entries(args as Record<string, unknown>);
-  if (entries.length === 0) return "";
-  return entries
-    .slice(0, 3)
-    .map(([, v]) => {
-      const s = typeof v === "string" ? v : JSON.stringify(v);
-      return s.length > 40 ? s.slice(0, 37) + "..." : s;
-    })
-    .join(", ");
 }

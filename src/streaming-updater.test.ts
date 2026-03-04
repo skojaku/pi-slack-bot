@@ -168,7 +168,7 @@ describe("StreamingUpdater", () => {
     updater.appendText(state, "Working...");
     updater.appendToolStart(state, "read_file", { path: "/foo.ts" });
 
-    flushTimers();
+    // Tool start triggers immediate flush (no timer needed)
     await new Promise((r) => realSetTimeout(r, 10));
 
     const text1 = client.chat.update.mock.calls[0].arguments[0].text;
@@ -176,12 +176,73 @@ describe("StreamingUpdater", () => {
     assert.ok(text1.includes("read_file"), "should contain tool name");
 
     updater.appendToolEnd(state, "read_file", false);
-    flushTimers();
     await new Promise((r) => realSetTimeout(r, 10));
 
     const text2 = client.chat.update.mock.calls[1].arguments[0].text;
     assert.ok(text2.includes("✅"), "should contain success icon");
     assert.ok(!text2.includes("🔧"), "wrench should be replaced");
+  });
+
+  it("tool start triggers immediate flush bypassing throttle timer", async () => {
+    const client = makeClient();
+    const updater = new StreamingUpdater(client, 3000);
+    const state = await updater.begin("C1", "ts1");
+
+    updater.appendText(state, "Some text");
+    // appendText schedules a throttled timer
+    assert.equal(timers.length, 1);
+
+    updater.appendToolStart(state, "bash", { command: "ls" });
+    // Immediate flush should cancel the pending timer
+    assert.equal(timers.length, 0);
+
+    await new Promise((r) => realSetTimeout(r, 10));
+    assert.equal(client.chat.update.mock.callCount(), 1);
+    const text = client.chat.update.mock.calls[0].arguments[0].text;
+    assert.ok(text.includes("Some text"), "should include text content");
+    assert.ok(text.includes("bash"), "should include tool name");
+  });
+
+  it("tool end triggers immediate flush bypassing throttle timer", async () => {
+    const client = makeClient();
+    const updater = new StreamingUpdater(client, 3000);
+    const state = await updater.begin("C1", "ts1");
+
+    updater.appendToolStart(state, "read_file", { path: "/a.ts" });
+    await new Promise((r) => realSetTimeout(r, 10));
+    assert.equal(client.chat.update.mock.callCount(), 1);
+
+    // Append text to schedule a throttle timer
+    updater.appendText(state, "reading...");
+    assert.equal(timers.length, 1);
+
+    updater.appendToolEnd(state, "read_file", true);
+    // Timer cancelled by immediate flush
+    assert.equal(timers.length, 0);
+
+    await new Promise((r) => realSetTimeout(r, 10));
+    assert.equal(client.chat.update.mock.callCount(), 2);
+    const text = client.chat.update.mock.calls[1].arguments[0].text;
+    assert.ok(text.includes("❌"), "should contain error icon");
+    assert.ok(!text.includes("🔧"), "wrench should be replaced");
+  });
+
+  it("tool lines appear after text content in flushed output", async () => {
+    const client = makeClient();
+    const updater = new StreamingUpdater(client, 3000);
+    const state = await updater.begin("C1", "ts1");
+
+    updater.appendText(state, "Here is some text");
+    updater.appendToolStart(state, "write_file", { path: "/b.ts" });
+
+    await new Promise((r) => realSetTimeout(r, 10));
+
+    const text = client.chat.update.mock.calls[0].arguments[0].text;
+    const textIdx = text.indexOf("Here is some text");
+    const toolIdx = text.indexOf("write_file");
+    assert.ok(textIdx >= 0, "text content should be present");
+    assert.ok(toolIdx >= 0, "tool line should be present");
+    assert.ok(textIdx < toolIdx, "text content should appear before tool lines");
   });
 
   it("empty content does not trigger chat.update", async () => {

@@ -4,7 +4,6 @@ import type { AgentSession, AgentSessionEvent, AgentSessionEventListener } from 
 import type { WebClient } from "@slack/web-api";
 import type { Config, ThinkingLevel } from "./config.js";
 import { StreamingUpdater } from "./streaming-updater.js";
-import type { StreamingState } from "./streaming-updater.js";
 
 export interface ThreadSessionCreateParams {
   threadTs: string;
@@ -94,6 +93,10 @@ export class ThreadSession {
         event.assistantMessageEvent.type === "text_delta"
       ) {
         this._updater.appendText(state, event.assistantMessageEvent.delta);
+      } else if (event.type === "tool_execution_start") {
+        this._updater.appendToolStart(state, event.toolName, event.args);
+      } else if (event.type === "tool_execution_end") {
+        this._updater.appendToolEnd(state, event.toolName, event.isError);
       }
     });
 
