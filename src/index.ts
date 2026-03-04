@@ -23,14 +23,15 @@ console.log({
   attachPort: config.attachPort,
 });
 
-const { app, sessionManager } = createApp(config);
+const slackApp = createApp(config);
 
-await app.start();
-console.log("Bot running");
+await slackApp.app.start();
+console.log(`Bot running (${slackApp.knownProjects.length} projects discovered)`);
 
 process.on("SIGINT", async () => {
   console.log("\nShutting down...");
-  await sessionManager.disposeAll();
-  await app.stop();
+  clearInterval(slackApp.refreshTimer);
+  await slackApp.sessionManager.disposeAll();
+  await slackApp.app.stop();
   process.exit(0);
 });
