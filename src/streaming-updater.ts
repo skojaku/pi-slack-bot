@@ -1,9 +1,10 @@
 import type { WebClient } from "@slack/web-api";
-import { markdownToMrkdwn } from "./formatter.js";
+import { markdownToMrkdwn, splitMrkdwn } from "./formatter.js";
 
 export interface StreamingState {
   channelId: string;
   threadTs: string;
+  initialMessageTs: string;
   currentMessageTs: string;
   rawMarkdown: string;
   toolLines: string[];
@@ -15,10 +16,12 @@ export interface StreamingState {
 export class StreamingUpdater {
   private _client: WebClient;
   private _throttleMs: number;
+  private _msgLimit: number;
 
-  constructor(client: WebClient, throttleMs = 3000) {
+  constructor(client: WebClient, throttleMs = 3000, msgLimit = 3900) {
     this._client = client;
     this._throttleMs = throttleMs;
+    this._msgLimit = msgLimit;
   }
 
   async begin(channelId: string, threadTs: string): Promise<StreamingState> {
@@ -37,6 +40,7 @@ export class StreamingUpdater {
     return {
       channelId,
       threadTs,
+      initialMessageTs: res.ts!,
       currentMessageTs: res.ts!,
       rawMarkdown: "",
       toolLines: [],
@@ -81,13 +85,13 @@ export class StreamingUpdater {
 
     await this._client.reactions.remove({
       channel: state.channelId,
-      timestamp: state.currentMessageTs,
+      timestamp: state.initialMessageTs,
       name: "hourglass_flowing_sand",
     });
 
     await this._client.reactions.add({
       channel: state.channelId,
-      timestamp: state.currentMessageTs,
+      timestamp: state.initialMessageTs,
       name: "white_check_mark",
     });
   }
@@ -103,7 +107,7 @@ export class StreamingUpdater {
     try {
       await this._client.reactions.remove({
         channel: state.channelId,
-        timestamp: state.currentMessageTs,
+        timestamp: state.initialMessageTs,
         name: "hourglass_flowing_sand",
       });
     } catch {
@@ -133,12 +137,25 @@ export class StreamingUpdater {
     if (!combined) return;
 
     const mrkdwn = markdownToMrkdwn(combined, partial);
+    const chunks = splitMrkdwn(mrkdwn, this._msgLimit);
 
+    // Update the current message with the first chunk
     await this._client.chat.update({
       channel: state.channelId,
       ts: state.currentMessageTs,
-      text: mrkdwn,
+      text: chunks[0],
     });
+
+    // Post remaining chunks as new thread replies
+    for (let i = 1; i < chunks.length; i++) {
+      const res = await this._client.chat.postMessage({
+        channel: state.channelId,
+        thread_ts: state.threadTs,
+        text: chunks[i],
+      });
+      state.postedMessageTs.push(state.currentMessageTs);
+      state.currentMessageTs = res.ts!;
+    }
   }
 }
 

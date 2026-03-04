@@ -195,4 +195,81 @@ describe("StreamingUpdater", () => {
 
     assert.equal(client.chat.update.mock.callCount(), 0);
   });
+
+  it("content exceeding msgLimit triggers split and posts overflow as new messages", async () => {
+    const client = makeClient();
+    let postCount = 0;
+    client.chat.postMessage = mock.fn(async () => ({ ts: `msg-${++postCount}` }));
+
+    // Use a small limit to easily trigger splitting
+    const updater = new StreamingUpdater(client, 3000, 100);
+    const state = await updater.begin("C1", "ts1");
+
+    // Generate content that exceeds 100 chars — two paragraphs
+    const para1 = "A".repeat(60);
+    const para2 = "B".repeat(60);
+    updater.appendText(state, `${para1}\n\n${para2}`);
+
+    flushTimers();
+    await new Promise((r) => realSetTimeout(r, 10));
+
+    // First chunk via chat.update on the original message
+    assert.equal(client.chat.update.mock.callCount(), 1);
+    assert.equal(client.chat.update.mock.calls[0].arguments[0].ts, "msg-1");
+
+    // Overflow chunk(s) posted as new thread replies
+    // postMessage: 1 from begin + at least 1 overflow
+    assert.ok(client.chat.postMessage.mock.callCount() >= 2, "should post overflow chunk(s)");
+
+    // The overflow postMessage should be in the same thread
+    const overflowCall = client.chat.postMessage.mock.calls[1].arguments[0];
+    assert.equal(overflowCall.thread_ts, "ts1");
+  });
+
+  it("currentMessageTs updated to last overflow message ts", async () => {
+    const client = makeClient();
+    let postCount = 0;
+    client.chat.postMessage = mock.fn(async () => ({ ts: `msg-${++postCount}` }));
+
+    const updater = new StreamingUpdater(client, 3000, 100);
+    const state = await updater.begin("C1", "ts1");
+
+    assert.equal(state.currentMessageTs, "msg-1");
+
+    const para1 = "A".repeat(60);
+    const para2 = "B".repeat(60);
+    updater.appendText(state, `${para1}\n\n${para2}`);
+
+    flushTimers();
+    await new Promise((r) => realSetTimeout(r, 10));
+
+    // currentMessageTs should have moved to the last posted overflow
+    assert.notEqual(state.currentMessageTs, "msg-1");
+    // postedMessageTs should track the previous message(s)
+    assert.ok(state.postedMessageTs.includes("msg-1"), "original ts should be in postedMessageTs");
+  });
+
+  it("finalize reactions target initialMessageTs even after split", async () => {
+    const client = makeClient();
+    let postCount = 0;
+    client.chat.postMessage = mock.fn(async () => ({ ts: `msg-${++postCount}` }));
+
+    const updater = new StreamingUpdater(client, 3000, 100);
+    const state = await updater.begin("C1", "ts1");
+
+    const para1 = "A".repeat(60);
+    const para2 = "B".repeat(60);
+    updater.appendText(state, `${para1}\n\n${para2}`);
+
+    await updater.finalize(state);
+
+    // Reactions should target the initial message (msg-1), not the overflow
+    const removeCall = client.reactions.remove.mock.calls[0].arguments[0];
+    assert.equal(removeCall.timestamp, "msg-1");
+
+    const addCalls = client.reactions.add.mock.calls;
+    const checkmarkCall = addCalls[addCalls.length - 1].arguments[0];
+    assert.equal(checkmarkCall.timestamp, "msg-1");
+    assert.equal(checkmarkCall.name, "white_check_mark");
+  });
 });
