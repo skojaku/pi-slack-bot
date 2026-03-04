@@ -95,6 +95,10 @@ export class BotSessionManager {
     return this._sessions.size;
   }
 
+  get sessionDir(): string {
+    return this._config.sessionDir;
+  }
+
   stopReaper(): void {
     clearInterval(this._reaper);
   }

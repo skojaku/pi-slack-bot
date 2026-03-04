@@ -5,6 +5,7 @@ import type { ThreadSession } from "./thread-session.js";
 import type { BotSessionManager, ThreadSessionInfo } from "./session-manager.js";
 import type { ThinkingLevel } from "./config.js";
 import { postRalphPicker, postPromptPicker } from "./command-picker.js";
+import { postProjectSessionPicker, postToTuiCommand } from "./session-picker.js";
 
 const VALID_THINKING_LEVELS: ThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh"];
 
@@ -39,9 +40,15 @@ const handlers: Record<string, CommandHandler> = {
       "`!sessions` — List active sessions",
       "`!cwd <path>` — Change working directory",
       "`!reload` — Reload extensions and prompt templates",
+      "`!resume` — Browse and resume a local pi TUI session",
+      "`!to-tui` — Get a command to open this Slack session in your terminal",
       "`!ralph [preset] [prompt]` — Start a Ralph loop (shows preset picker if no args)",
       "`!plan <idea>` — Start a PDD planning session",
       "`!prompt [name]` — Run a prompt template (shows picker if no args)",
+      "",
+      "*File sharing:*",
+      "• Upload files to a thread — they're saved to `.slack-files/` in the session cwd",
+      "• The agent can share files back via the `share_file` tool",
       "",
       "Any other `!command` is forwarded to pi as `/command` (extensions & prompt templates).",
     ];
@@ -191,6 +198,14 @@ const handlers: Record<string, CommandHandler> = {
     } else {
       await reply(ctx, "Usage: `!plan <idea>` — e.g. `!plan build a rate limiter for our API`\n\nThis starts a PDD (Prompt-Driven Development) planning session that transforms your rough idea into a detailed design with an implementation plan.");
     }
+  },
+
+  async resume(ctx) {
+    await postProjectSessionPicker(ctx.client, ctx.channel, ctx.threadTs, ctx.sessionManager);
+  },
+
+  async "to-tui"(ctx) {
+    await postToTuiCommand(ctx.client, ctx.channel, ctx.threadTs, ctx.session, ctx.sessionManager.sessionDir);
   },
 
   async prompt(ctx, args) {

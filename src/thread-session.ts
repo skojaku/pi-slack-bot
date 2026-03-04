@@ -1,10 +1,12 @@
 import path from "path";
+import { mkdirSync } from "fs";
 import { createAgentSession, createCodingTools, DefaultResourceLoader, SessionManager as PiSessionManager } from "@mariozechner/pi-coding-agent";
 import type { AgentSession, AgentSessionEvent, AgentSessionEventListener, PromptTemplate } from "@mariozechner/pi-coding-agent";
 import type { WebClient } from "@slack/web-api";
 import type { Config, ThinkingLevel } from "./config.js";
 import { StreamingUpdater } from "./streaming-updater.js";
 import { createFilePickerTool, type FilePickerContext } from "./file-picker.js";
+import { createShareFileTool, type ShareFileContext } from "./file-sharing.js";
 
 export interface ThreadSessionCreateParams {
   threadTs: string;
@@ -48,8 +50,14 @@ export class ThreadSession {
   }
 
   static async create(params: ThreadSessionCreateParams): Promise<ThreadSession> {
-    const sessionFilePath = path.join(params.sessionDir, `${params.threadTs}.jsonl`);
-    const piSessionManager = PiSessionManager.open(sessionFilePath);
+    // Store sessions in pi's native directory structure so `pi /resume` finds them.
+    // Encodes cwd the same way pi does: ~/.pi/agent/sessions/--<encoded-cwd>--/
+    const cwdEncoded = `--${params.cwd.replace(/^[/\\]/, "").replace(/[/\\:]/g, "-")}--`;
+    const nativeSessionDir = path.join(params.sessionDir, cwdEncoded);
+    mkdirSync(nativeSessionDir, { recursive: true });
+
+    const sessionFilePath = path.join(nativeSessionDir, `${params.threadTs}.jsonl`);
+    const piSessionManager = PiSessionManager.open(sessionFilePath, nativeSessionDir);
 
     // DefaultResourceLoader auto-discovers extensions and prompts from ~/.pi/agent/
     const resourceLoader = new DefaultResourceLoader({ cwd: params.cwd });
@@ -64,11 +72,19 @@ export class ThreadSession {
     };
     const filePickerTool = createFilePickerTool(params.cwd, () => filePickerContext);
 
+    // Share file tool — lets the agent upload files to the Slack thread
+    const shareFileContext: ShareFileContext = {
+      client: params.client,
+      channelId: params.channelId,
+      threadTs: params.threadTs,
+    };
+    const shareFileTool = createShareFileTool(params.cwd, () => shareFileContext);
+
     const { session } = await createAgentSession({
       cwd: params.cwd,
       sessionManager: piSessionManager,
       tools: createCodingTools(params.cwd),
-      customTools: [filePickerTool],
+      customTools: [filePickerTool, shareFileTool],
       resourceLoader,
     });
 

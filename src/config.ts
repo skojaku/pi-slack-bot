@@ -71,7 +71,7 @@ export function loadConfig(): Config {
 
     maxSessions: optionalInt("MAX_SESSIONS", 10),
     sessionIdleTimeoutSecs: optionalInt("SESSION_IDLE_TIMEOUT", 3600),
-    sessionDir: expandHome(optional("SESSION_DIR", "~/.pi-slack-bot/sessions")),
+    sessionDir: expandHome(optional("SESSION_DIR", "~/.pi/agent/sessions")),
 
     streamThrottleMs: optionalInt("STREAM_THROTTLE_MS", 3000),
     slackMsgLimit: optionalInt("SLACK_MSG_LIMIT", 3000),

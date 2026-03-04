@@ -59,7 +59,7 @@ describe("loadConfig", () => {
     assert.equal(cfg.thinkingLevel, "off");
     assert.equal(cfg.maxSessions, 10);
     assert.equal(cfg.sessionIdleTimeoutSecs, 3600);
-    assert.ok(cfg.sessionDir.includes(".pi-slack-bot/sessions"));
+    assert.ok(cfg.sessionDir.includes(".pi/agent/sessions"));
     assert.equal(cfg.streamThrottleMs, 3000);
     assert.equal(cfg.slackMsgLimit, 3000);
     assert.ok(cfg.workspaceDirs.length > 0);

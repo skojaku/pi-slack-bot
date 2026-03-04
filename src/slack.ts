@@ -13,11 +13,41 @@ import {
   handlePromptSelect,
   tryConsumeRalphPrompt,
 } from "./command-picker.js";
+import {
+  handleResumeProjectSelect,
+  handleResumeSessionSelect,
+} from "./session-picker.js";
+import {
+  downloadSlackFiles,
+  formatInboundFileContext,
+  type SlackFile,
+} from "./file-sharing.js";
+
+/**
+ * If the message has attached files, download them into the cwd and
+ * prepend context about them to the prompt text.
+ */
+async function enrichPromptWithFiles(
+  files: SlackFile[],
+  text: string,
+  cwd: string,
+  botToken: string,
+): Promise<string> {
+  if (files.length === 0) return text;
+
+  const downloaded = await downloadSlackFiles(files, cwd, botToken);
+  const context = formatInboundFileContext(downloaded);
+  if (!context) return text;
+
+  return text ? `${context}\n\n${text}` : context;
+}
 
 export interface PendingCwd {
   threadTs: string;
   channelId: string;
   prompt: string;
+  /** Files the user shared with this message, pending download after cwd is selected. */
+  files: SlackFile[];
 }
 
 /** Slack limits actions blocks to 25 elements, and max 5 actions blocks per message. */
@@ -31,6 +61,7 @@ async function postProjectPicker(
   projects: Project[],
   pendingCwd: Map<string, PendingCwd>,
   headerText: string,
+  files: SlackFile[] = [],
 ): Promise<void> {
   // Build buttons — projects + home fallback
   const allChoices = [
@@ -67,7 +98,7 @@ async function postProjectPicker(
   });
 
   if (result.ts) {
-    pendingCwd.set(result.ts, { threadTs, channelId: channel, prompt });
+    pendingCwd.set(result.ts, { threadTs, channelId: channel, prompt, files });
   }
 }
 
@@ -101,12 +132,29 @@ export function createApp(config: Config, attachServer?: AttachServer): SlackApp
 
   app.event("message", async ({ event, client }) => {
     if (!("user" in event) || !("text" in event)) return;
-    if (event.subtype === "bot_message") return;
+    // Allow file_share subtype through — user uploaded a file
+    if (event.subtype && event.subtype !== "file_share") return;
+    if ((event as any).subtype === "bot_message") return;
     if (event.user !== config.slackUserId) return;
 
     const channel = event.channel;
     const threadTs = ("thread_ts" in event ? event.thread_ts : undefined) ?? event.ts;
     const text = event.text ?? "";
+
+    // Extract any files attached to this message
+    const slackFiles: SlackFile[] = [];
+    if ("files" in event && Array.isArray((event as any).files)) {
+      for (const f of (event as any).files) {
+        slackFiles.push({
+          id: f.id,
+          name: f.name ?? "unknown",
+          mimetype: f.mimetype,
+          size: f.size ?? 0,
+          urlPrivateDownload: f.url_private_download,
+          urlPrivate: f.url_private,
+        });
+      }
+    }
 
     // Command detection — handle !commands before cwd parsing
     const cmd = parseCommand(text);
@@ -140,7 +188,8 @@ export function createApp(config: Config, attachServer?: AttachServer): SlackApp
     if (isThreadReply) {
       const existing = sessionManager.get(threadTs);
       if (existing) {
-        existing.enqueue(() => existing.prompt(text));
+        const prompt = await enrichPromptWithFiles(slackFiles, text, existing.cwd, config.slackBotToken);
+        existing.enqueue(() => existing.prompt(prompt));
         return;
       }
       // Thread reply but no session — fall through to create with homedir
@@ -156,16 +205,17 @@ export function createApp(config: Config, attachServer?: AttachServer): SlackApp
           channelId: channel,
           cwd: parsed.cwd,
         });
-        session.enqueue(() => session.prompt(parsed.prompt));
+        const prompt = await enrichPromptWithFiles(slackFiles, parsed.prompt, session.cwd, config.slackBotToken);
+        session.enqueue(() => session.prompt(prompt));
       } else if (parsed.candidates.length > 0) {
         // Fuzzy matches — show matching projects as buttons
         const matched = projects.filter((p) => parsed.candidates.includes(p.path));
         await postProjectPicker(client, channel, threadTs, parsed.prompt, matched, pendingCwd,
-          `Multiple projects match \`${parsed.cwdToken}\`. Pick one:`);
+          `Multiple projects match \`${parsed.cwdToken}\`. Pick one:`, slackFiles);
       } else {
         // No cwd token or no match — show all projects as a picker
         await postProjectPicker(client, channel, threadTs, text, projects, pendingCwd,
-          "📂 Pick a project directory:");
+          "📂 Pick a project directory:", slackFiles);
       }
     } catch (err) {
       if (err instanceof SessionLimitError) {
@@ -208,7 +258,8 @@ export function createApp(config: Config, attachServer?: AttachServer): SlackApp
         channelId: pending.channelId,
         cwd: selectedCwd,
       });
-      session.enqueue(() => session.prompt(pending.prompt));
+      const prompt = await enrichPromptWithFiles(pending.files, pending.prompt, session.cwd, config.slackBotToken);
+      session.enqueue(() => session.prompt(prompt));
     } catch (err) {
       if (err instanceof SessionLimitError) {
         await client.chat.postMessage({
@@ -281,6 +332,26 @@ export function createApp(config: Config, attachServer?: AttachServer): SlackApp
     const messageTs = body.message?.ts;
     if (!messageTs) return;
     await handlePromptSelect(messageTs, action.value!);
+  });
+
+  /* ── Session resume picker action handlers ──────────────────────── */
+
+  app.action(/^resume_project_/, async ({ action, body, ack }) => {
+    await ack();
+    if (action.type !== "button" || !("value" in action)) return;
+    if (body.type !== "block_actions") return;
+    const messageTs = body.message?.ts;
+    if (!messageTs) return;
+    await handleResumeProjectSelect(messageTs, action.value!);
+  });
+
+  app.action(/^resume_session_/, async ({ action, body, ack }) => {
+    await ack();
+    if (action.type !== "button" || !("value" in action)) return;
+    if (body.type !== "block_actions") return;
+    const messageTs = body.message?.ts;
+    if (!messageTs) return;
+    await handleResumeSessionSelect(messageTs, action.value!);
   });
 
   return {

@@ -162,6 +162,8 @@ export function formatToolArgs(toolName: string, args: unknown): string {
       return truncateStr(String(obj.url ?? obj.urls ?? ""), 60);
     case "file_picker":
       return truncateStr(String(obj.startDir ?? obj.message ?? ""), 60);
+    case "share_file":
+      return truncateStr(String(obj.path ?? ""), 60);
     default:
       return formatGenericArgs(obj);
   }
