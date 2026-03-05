@@ -115,6 +115,58 @@ describe("isRalphLoopStart regex", () => {
   });
 });
 
+describe("isRalphMsg notification detection regex", () => {
+  // Must match the regex in thread-session.ts noopUiContext.notify
+  const isRalphMsg = (msg: string) =>
+    /Ralph loop|ralph loop|[Ll]oop (paused|resumed|auto-resumed|ended|is not paused|is already running)|[Aa]vailable presets:|Preset:|No active loop|No loop state|No (iteration history|past loops|presets found)|Steering queued|Unknown preset|has no hats/i.test(msg);
+
+  it("detects loop lifecycle notifications", () => {
+    assert.ok(isRalphMsg("Ralph loop ended: Task complete ✓ (5 iterations, 120s)"));
+    assert.ok(isRalphMsg("Ralph loop [3/100]: 🏗 Builder → 🔍 Reviewer (event: build.done)"));
+    assert.ok(isRalphMsg("A loop is already running. Use /ralph stop first."));
+    assert.ok(isRalphMsg("A Ralph loop is running. Use /ralph stop first."));
+  });
+
+  it("detects pause/resume notifications", () => {
+    assert.ok(isRalphMsg("⏸ Loop paused. The loop will not auto-continue after this turn. Use /ralph resume to continue or send any message."));
+    assert.ok(isRalphMsg("▶ Loop resumed. Will continue after this turn completes."));
+    assert.ok(isRalphMsg("▶ Loop auto-resumed after user message"));
+    assert.ok(isRalphMsg("Loop is not paused"));
+  });
+
+  it("detects status and steering notifications", () => {
+    assert.ok(isRalphMsg("Preset: feature\nHat: Builder\nIteration: 3/100\nElapsed: 45s"));
+    assert.ok(isRalphMsg("Steering queued (2 pending). Will be injected into the next hat."));
+  });
+
+  it("detects error/empty-state notifications", () => {
+    assert.ok(isRalphMsg("No active loop"));
+    assert.ok(isRalphMsg("No active loop to steer"));
+    assert.ok(isRalphMsg("No active loop to pause"));
+    assert.ok(isRalphMsg("No active loop to resume"));
+    assert.ok(isRalphMsg("No loop state available"));
+    assert.ok(isRalphMsg("No iteration history yet"));
+    assert.ok(isRalphMsg("No past loops found"));
+    assert.ok(isRalphMsg("No presets found"));
+    assert.ok(isRalphMsg("No presets found. Add .yml files to ~/.pi/agent/ralph/presets/"));
+    assert.ok(isRalphMsg("Unknown preset: foobar"));
+    assert.ok(isRalphMsg("Preset has no hats defined"));
+  });
+
+  it("detects preset list notifications", () => {
+    assert.ok(isRalphMsg("Available presets:\n  feature — Feature development\n  bugfix — Bug fixing"));
+  });
+
+  it("does not match non-ralph notifications", () => {
+    assert.ok(!isRalphMsg("Connected to https://example.com"));
+    assert.ok(!isRalphMsg("Disconnected from Slack bot"));
+    assert.ok(!isRalphMsg("Slack thread: https://slack.com/thread/123"));
+    assert.ok(!isRalphMsg("Not attached"));
+    assert.ok(!isRalphMsg("Already attached. Use /detach first."));
+    assert.ok(!isRalphMsg("Some random notification"));
+  });
+});
+
 describe("noopUiContext theme contract", () => {
   // The noop theme must implement all methods ralph calls on ctx.ui.theme.
   // This mirrors the shape defined in thread-session.ts noopUiContext.theme.

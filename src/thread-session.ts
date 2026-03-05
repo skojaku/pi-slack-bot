@@ -130,8 +130,7 @@ export class ThreadSession {
       notify: (message: string, type?: string) => {
         console.log(`[Extension notify ${type ?? "info"}] ${message}`);
         // Detect ralph-related notifications and post to Slack.
-        const isRalphMsg = message.includes("Ralph loop") || message.includes("ralph loop")
-          || message.includes("Preset:") || message.includes("No active loop");
+        const isRalphMsg = /Ralph loop|ralph loop|[Ll]oop (paused|resumed|auto-resumed|ended|is not paused|is already running)|[Aa]vailable presets:|Preset:|No active loop|No loop state|No (iteration history|past loops|presets found)|Steering queued|Unknown preset|has no hats/i.test(message);
         if (isRalphMsg) {
           if (message.includes("ended:") || message.includes("complete") || message.includes("Task complete")) {
             ts._ralphBackgroundActive = false;
