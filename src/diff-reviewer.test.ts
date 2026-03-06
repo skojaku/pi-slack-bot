@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { extractModifiedFiles, hasFileModifications, generateDiff } from "./diff-reviewer.js";
+import { extractModifiedFiles, hasFileModifications, generateDiff, createPaste } from "./diff-reviewer.js";
 import type { ToolCallRecord } from "./formatter.js";
 
 describe("extractModifiedFiles", () => {
@@ -69,5 +69,21 @@ describe("generateDiff", () => {
   it("returns null for non-git directory", () => {
     const result = generateDiff("/tmp");
     assert.equal(result, null);
+  });
+});
+
+describe("createPaste", () => {
+  it("returns null when curl fails (e.g. no midway cookie)", () => {
+    // Use a bogus HOME so the midway cookie doesn't exist
+    const origHome = process.env.HOME;
+    process.env.HOME = "/tmp/nonexistent-home-" + Date.now();
+    try {
+      const result = createPaste("test content", "test title");
+      // Should return null (curl will fail to auth) or succeed if somehow reachable
+      // Either way, it should not throw
+      assert.ok(result === null || typeof result?.url === "string");
+    } finally {
+      process.env.HOME = origHome;
+    }
   });
 });

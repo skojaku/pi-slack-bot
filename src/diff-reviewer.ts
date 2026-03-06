@@ -1,11 +1,13 @@
 /**
- * Diff reviewer — generates and uploads git diffs for files modified by the agent.
+ * Diff reviewer — generates git diffs and uploads them to paste.amazon.com
+ * for syntax-highlighted review, posting the link to Slack.
  *
- * After each agent turn, if edit/write tools were used, this uploads the
- * git diff as a Slack file snippet so users can review changes inline.
+ * After each agent turn, if edit/write tools were used, this creates a paste
+ * with the unified diff and posts a clickable link to the Slack thread.
  * Also provides an on-demand `!diff` command.
  */
 import { execSync } from "child_process";
+import { writeFileSync, unlinkSync } from "fs";
 import type { WebClient } from "@slack/web-api";
 import type { ToolCallRecord } from "./formatter.js";
 
@@ -118,31 +120,75 @@ export function generateDiff(cwd: string): DiffResult | null {
   }
 }
 
-/**
- * Upload a diff as a Slack file snippet in the thread.
- */
-export async function uploadDiff(
-  client: WebClient,
-  channelId: string,
-  threadTs: string,
-  diff: DiffResult,
-): Promise<void> {
-  const title = `📝 ${diff.fileCount} file${diff.fileCount === 1 ? "" : "s"} changed`;
-  const comment = diff.stats ? `> ${diff.stats}` : undefined;
+export interface PasteResult {
+  /** The paste URL (e.g. https://paste.amazon.com/show/samfp/1234567890) */
+  url: string;
+}
 
-  await client.files.uploadV2({
-    channel_id: channelId,
-    thread_ts: threadTs,
-    content: diff.diff,
-    filename: "changes.diff",
-    title,
-    initial_comment: comment,
-  });
+/**
+ * Create a paste on paste.amazon.com with the given content.
+ * Returns the paste URL, or null if the upload fails.
+ *
+ * Uses midway cookie auth (must have valid midway session).
+ */
+export function createPaste(content: string, title: string, language = "diff"): PasteResult | null {
+  const cookieFile = `${process.env.HOME}/.midway/cookie`;
+
+  try {
+    // Step 1: GET the page to obtain a CSRF authenticity token
+    const pageHtml = execSync(
+      `curl -s --anyauth --location-trusted --negotiate -u : ` +
+      `--cookie "${cookieFile}" --cookie-jar "${cookieFile}" ` +
+      `"https://paste.amazon.com/"`,
+      { encoding: "utf-8", timeout: 15000 },
+    );
+
+    const tokenMatch = pageHtml.match(/name="authenticity_token"[^>]*value="([^"]+)"/);
+    if (!tokenMatch) {
+      console.error("[DiffReviewer] Could not extract CSRF token from paste.amazon.com");
+      return null;
+    }
+    const token = tokenMatch[1];
+
+    // Step 2: POST the paste content. Write content to a temp file to avoid
+    // shell escaping issues with large diffs.
+    const tmpFile = `/tmp/pi-diff-paste-${Date.now()}.txt`;
+    writeFileSync(tmpFile, content, "utf-8");
+
+    try {
+      const headers = execSync(
+        `curl -s --anyauth --location-trusted --negotiate -u : ` +
+        `--cookie "${cookieFile}" --cookie-jar "${cookieFile}" ` +
+        `-X POST "https://paste.amazon.com/create" ` +
+        `--data-urlencode "authenticity_token=${token}" ` +
+        `--data-urlencode "text@${tmpFile}" ` +
+        `--data-urlencode "language=${language}" ` +
+        `--data-urlencode "title=${title}" ` +
+        `--data-urlencode "numbers=1" ` +
+        `-D - -o /dev/null`,
+        { encoding: "utf-8", timeout: 30000 },
+      );
+
+      const locationMatch = headers.match(/^location:\s*(.+)$/mi);
+      if (!locationMatch) {
+        console.error("[DiffReviewer] No redirect location from paste.amazon.com create");
+        return null;
+      }
+
+      return { url: locationMatch[1].trim() };
+    } finally {
+      try { unlinkSync(tmpFile); } catch { /* ignore */ }
+    }
+  } catch (err) {
+    console.error("[DiffReviewer] Failed to create paste:", err);
+    return null;
+  }
 }
 
 /**
  * Post a diff review for the current working directory.
- * Called after agent turns (auto) or on-demand via !diff.
+ * Creates a syntax-highlighted paste on paste.amazon.com and posts the link.
+ * Falls back to a Slack file snippet if paste creation fails.
  * Returns true if a diff was posted, false if no changes found.
  */
 export async function postDiffReview(
@@ -154,6 +200,30 @@ export async function postDiffReview(
   const result = generateDiff(cwd);
   if (!result) return false;
 
-  await uploadDiff(client, channelId, threadTs, result);
+  const title = `${result.fileCount} file${result.fileCount === 1 ? "" : "s"} changed`;
+
+  // Try paste.amazon.com first for nice syntax-highlighted rendering
+  const paste = createPaste(result.diff, title);
+  if (paste) {
+    const statsLine = result.stats ? `\n> ${result.stats}` : "";
+    await client.chat.postMessage({
+      channel: channelId,
+      thread_ts: threadTs,
+      text: `📝 <${paste.url}|${title}>${statsLine}`,
+      unfurl_links: false,
+    });
+    return true;
+  }
+
+  // Fallback: upload as Slack file snippet
+  console.warn("[DiffReviewer] paste.amazon.com failed, falling back to Slack file snippet");
+  await client.files.uploadV2({
+    channel_id: channelId,
+    thread_ts: threadTs,
+    content: result.diff,
+    filename: "changes.diff",
+    title: `📝 ${title}`,
+    initial_comment: result.stats ? `> ${result.stats}` : undefined,
+  });
   return true;
 }
