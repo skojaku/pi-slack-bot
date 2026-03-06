@@ -16,7 +16,6 @@ const baseConfig: Config = {
   streamThrottleMs: 3000,
   slackMsgLimit: 3900,
   workspaceDirs: [],
-  attachPort: 3001,
 };
 
 function makeSession(threadTs: string) {

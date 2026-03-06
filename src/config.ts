@@ -25,9 +25,6 @@ export interface Config {
 
   // cwd discovery
   workspaceDirs: string[];
-
-  // Attach server
-  attachPort: number;
 }
 
 function required(name: string): string {
@@ -80,7 +77,5 @@ export function loadConfig(): Config {
       .split(",")
       .map((d) => expandHome(d.trim()))
       .filter(Boolean),
-
-    attachPort: optionalInt("ATTACH_PORT", 3001),
   };
 }

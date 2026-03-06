@@ -12,7 +12,7 @@ beforeEach(() => {
     "SLACK_BOT_TOKEN", "SLACK_APP_TOKEN", "SLACK_USER_ID",
     "PROVIDER", "MODEL", "THINKING_LEVEL",
     "MAX_SESSIONS", "SESSION_IDLE_TIMEOUT", "SESSION_DIR",
-    "STREAM_THROTTLE_MS", "SLACK_MSG_LIMIT", "WORKSPACE_DIRS", "ATTACH_PORT",
+    "STREAM_THROTTLE_MS", "SLACK_MSG_LIMIT", "WORKSPACE_DIRS",
   ]) {
     delete process.env[key];
   }
@@ -63,7 +63,6 @@ describe("loadConfig", () => {
     assert.equal(cfg.streamThrottleMs, 3000);
     assert.equal(cfg.slackMsgLimit, 3000);
     assert.ok(cfg.workspaceDirs.length > 0);
-    assert.equal(cfg.attachPort, 3001);
   });
 
   it("reads values from env", () => {
@@ -72,13 +71,11 @@ describe("loadConfig", () => {
     process.env.MODEL = "gpt-4o";
     process.env.THINKING_LEVEL = "high";
     process.env.MAX_SESSIONS = "5";
-    process.env.ATTACH_PORT = "4000";
     const cfg = loadConfig();
     assert.equal(cfg.provider, "openai");
     assert.equal(cfg.model, "gpt-4o");
     assert.equal(cfg.thinkingLevel, "high");
     assert.equal(cfg.maxSessions, 5);
-    assert.equal(cfg.attachPort, 4000);
   });
 
   it("throws on invalid THINKING_LEVEL", () => {

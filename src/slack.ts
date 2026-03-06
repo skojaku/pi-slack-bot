@@ -6,7 +6,6 @@ import type { Config } from "./config.js";
 import { BotSessionManager, SessionLimitError } from "./session-manager.js";
 import { parseMessage, loadProjects, projectPaths, type Project } from "./parser.js";
 import { parseCommand, dispatchCommand } from "./commands.js";
-import type { AttachServer } from "./attach-server.js";
 import { handleFileSelect, handleFileNav, handleFilePickCancel, getPendingPick } from "./file-picker.js";
 import {
   handleRalphPresetSelect,
@@ -107,10 +106,9 @@ export interface SlackApp {
   sessionManager: BotSessionManager;
   knownProjects: string[];
   pendingCwd: Map<string, PendingCwd>;
-  attachServer: AttachServer | null;
 }
 
-export function createApp(config: Config, attachServer?: AttachServer): SlackApp {
+export function createApp(config: Config): SlackApp {
   const app = new App({
     token: config.slackBotToken,
     appToken: config.slackAppToken,
@@ -170,19 +168,6 @@ export function createApp(config: Config, attachServer?: AttachServer): SlackApp
         sessionManager,
         session,
       });
-      return;
-    }
-
-    // Attached sessions — forward messages to the pi extension via WebSocket
-    if (attachServer?.hasSession(threadTs)) {
-      // Download any shared files into the attached session's cwd
-      const attachCwd = attachServer.getSessionCwd(threadTs);
-      if (slackFiles.length > 0 && attachCwd) {
-        const prompt = await enrichPromptWithFiles(slackFiles, text, attachCwd, config.slackBotToken);
-        attachServer.sendUserMessage(threadTs, prompt);
-      } else {
-        attachServer.sendUserMessage(threadTs, text);
-      }
       return;
     }
 
@@ -370,6 +355,5 @@ export function createApp(config: Config, attachServer?: AttachServer): SlackApp
     get knownProjects() { return knownProjects; },
     set knownProjects(v: string[]) { knownProjects = v; },
     pendingCwd,
-    attachServer: attachServer ?? null,
   };
 }
