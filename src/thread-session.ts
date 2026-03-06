@@ -8,7 +8,7 @@ import { StreamingUpdater } from "./streaming-updater.js";
 import { createFilePickerTool, type FilePickerContext } from "./file-picker.js";
 import { createShareFileTool, type ShareFileContext } from "./file-sharing.js";
 import { encodeCwd } from "./session-path.js";
-import { hasFileModifications, postDiffReview } from "./diff-reviewer.js";
+import { hasFileModifications, postDiffReview, getHeadRef } from "./diff-reviewer.js";
 import type { ToolCallRecord } from "./formatter.js";
 
 export interface ThreadSessionCreateParams {
@@ -68,6 +68,11 @@ export class ThreadSession {
    * Tool records for the current agent turn, used to detect file modifications.
    */
   private _turnToolRecords: ToolCallRecord[] = [];
+  /**
+   * Git HEAD SHA at the start of the current agent turn.
+   * Used to detect commits made during the turn.
+   */
+  private _turnBaseRef: string | null = null;
   /**
    * Promise that resolves when the current agent turn finishes.
    * Used by prompt() to wait for the full turn (including extension-triggered follow-ups).
@@ -247,6 +252,7 @@ export class ThreadSession {
         stateReady = false;
         pendingEvents = [];
         this._turnToolRecords = [];
+        this._turnBaseRef = getHeadRef(this.cwd);
 
         // If ralph loop is running in background, skip Slack streaming
         // but still track turn lifecycle for promise resolution.
@@ -266,6 +272,7 @@ export class ThreadSession {
         // Agent turn finished — finalize the stream and resolve the turn promise
         const state = this._activeStreamState;
         const toolRecords = [...this._turnToolRecords];
+        const baseRef = this._turnBaseRef;
         this._activeStreamState = null;
         stateReady = false;
         pendingEvents = [];
@@ -274,7 +281,10 @@ export class ThreadSession {
             // Auto-post diff if files were modified
             if (hasFileModifications(toolRecords)) {
               try {
-                await postDiffReview(this._client, this.channelId, this.threadTs, this.cwd);
+                await postDiffReview(this._client, this.channelId, this.threadTs, this.cwd, {
+                  baseRef,
+                  toolRecords,
+                });
               } catch (err) {
                 console.error(`[ThreadSession ${this.threadTs}] Failed to post diff review:`, err);
               }

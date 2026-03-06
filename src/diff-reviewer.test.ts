@@ -1,6 +1,18 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { extractModifiedFiles, hasFileModifications, generateDiff, createPaste, computeDiffStats } from "./diff-reviewer.js";
+import { execSync } from "child_process";
+import { mkdirSync, writeFileSync, rmSync } from "fs";
+import { join } from "path";
+import {
+  extractModifiedFiles,
+  hasFileModifications,
+  generateDiff,
+  createPaste,
+  computeDiffStats,
+  generateSyntheticDiff,
+  getHeadRef,
+  isGitRepo,
+} from "./diff-reviewer.js";
 import type { ToolCallRecord } from "./formatter.js";
 
 describe("extractModifiedFiles", () => {
@@ -65,10 +77,164 @@ describe("hasFileModifications", () => {
   });
 });
 
+describe("isGitRepo", () => {
+  it("returns false for non-git directory", () => {
+    assert.equal(isGitRepo("/tmp"), false);
+  });
+
+  it("returns true for a git repo", () => {
+    const dir = `/tmp/diff-test-repo-${Date.now()}`;
+    mkdirSync(dir, { recursive: true });
+    try {
+      execSync("git init", { cwd: dir, stdio: "pipe" });
+      assert.equal(isGitRepo(dir), true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("getHeadRef", () => {
+  it("returns null for non-git directory", () => {
+    assert.equal(getHeadRef("/tmp"), null);
+  });
+
+  it("returns null for git repo with no commits", () => {
+    const dir = `/tmp/diff-test-nocommit-${Date.now()}`;
+    mkdirSync(dir, { recursive: true });
+    try {
+      execSync("git init", { cwd: dir, stdio: "pipe" });
+      assert.equal(getHeadRef(dir), null);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("returns SHA for git repo with commits", () => {
+    const dir = `/tmp/diff-test-ref-${Date.now()}`;
+    mkdirSync(dir, { recursive: true });
+    try {
+      execSync("git init && git commit --allow-empty -m init", { cwd: dir, stdio: "pipe" });
+      const ref = getHeadRef(dir);
+      assert.ok(ref);
+      assert.match(ref, /^[0-9a-f]{40}$/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("generateDiff", () => {
   it("returns null for non-git directory", () => {
     const result = generateDiff("/tmp");
     assert.equal(result, null);
+  });
+
+  it("returns null when no changes", () => {
+    const dir = `/tmp/diff-test-clean-${Date.now()}`;
+    mkdirSync(dir, { recursive: true });
+    try {
+      execSync("git init && git commit --allow-empty -m init", { cwd: dir, stdio: "pipe" });
+      assert.equal(generateDiff(dir), null);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("detects uncommitted changes", () => {
+    const dir = `/tmp/diff-test-uncommitted-${Date.now()}`;
+    mkdirSync(dir, { recursive: true });
+    try {
+      execSync("git init", { cwd: dir, stdio: "pipe" });
+      writeFileSync(join(dir, "file.txt"), "original\n");
+      execSync("git add -A && git commit -m init", { cwd: dir, stdio: "pipe" });
+      writeFileSync(join(dir, "file.txt"), "modified\n");
+
+      const result = generateDiff(dir);
+      assert.ok(result);
+      assert.equal(result.fileCount, 1);
+      assert.ok(result.diff.includes("-original"));
+      assert.ok(result.diff.includes("+modified"));
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("detects untracked new files", () => {
+    const dir = `/tmp/diff-test-untracked-${Date.now()}`;
+    mkdirSync(dir, { recursive: true });
+    try {
+      execSync("git init && git commit --allow-empty -m init", { cwd: dir, stdio: "pipe" });
+      writeFileSync(join(dir, "NOTES.md"), "# Collaboration notes\n");
+
+      const result = generateDiff(dir);
+      assert.ok(result);
+      assert.equal(result.fileCount, 1);
+      assert.ok(result.diff.includes("NOTES.md"));
+      assert.ok(result.diff.includes("+# Collaboration notes"));
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("detects committed changes when baseRef is provided", () => {
+    const dir = `/tmp/diff-test-committed-${Date.now()}`;
+    mkdirSync(dir, { recursive: true });
+    try {
+      execSync("git init", { cwd: dir, stdio: "pipe" });
+      writeFileSync(join(dir, "file.txt"), "original\n");
+      execSync("git add -A && git commit -m init", { cwd: dir, stdio: "pipe" });
+
+      // Snapshot the base ref
+      const baseRef = getHeadRef(dir);
+      assert.ok(baseRef);
+
+      // Simulate agent making changes and committing
+      writeFileSync(join(dir, "file.txt"), "agent changed this\n");
+      writeFileSync(join(dir, "new-doc.md"), "# New document\n");
+      execSync("git add -A && git commit -m 'agent commit'", { cwd: dir, stdio: "pipe" });
+
+      // Without baseRef → no changes (everything is committed)
+      assert.equal(generateDiff(dir), null);
+
+      // With baseRef → sees all committed changes
+      const result = generateDiff(dir, { baseRef });
+      assert.ok(result);
+      assert.equal(result.fileCount, 2);
+      assert.ok(result.diff.includes("-original"));
+      assert.ok(result.diff.includes("+agent changed this"));
+      assert.ok(result.diff.includes("new-doc.md"));
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("includes both committed and uncommitted changes with baseRef", () => {
+    const dir = `/tmp/diff-test-mixed-${Date.now()}`;
+    mkdirSync(dir, { recursive: true });
+    try {
+      execSync("git init", { cwd: dir, stdio: "pipe" });
+      writeFileSync(join(dir, "a.txt"), "aaa\n");
+      execSync("git add -A && git commit -m init", { cwd: dir, stdio: "pipe" });
+
+      const baseRef = getHeadRef(dir);
+      assert.ok(baseRef);
+
+      // Committed change
+      writeFileSync(join(dir, "a.txt"), "bbb\n");
+      execSync("git add -A && git commit -m 'agent edit'", { cwd: dir, stdio: "pipe" });
+
+      // Uncommitted change
+      writeFileSync(join(dir, "a.txt"), "ccc\n");
+
+      const result = generateDiff(dir, { baseRef });
+      assert.ok(result);
+      // Should show the full change from aaa → ccc (not just bbb → ccc)
+      assert.ok(result.diff.includes("-aaa"));
+      assert.ok(result.diff.includes("+ccc"));
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 
@@ -139,6 +305,73 @@ diff --no-index a/dev/null b/new-file.md
     assert.equal(stats.fileCount, 0);
     assert.equal(stats.insertions, 0);
     assert.equal(stats.deletions, 0);
+  });
+});
+
+describe("generateSyntheticDiff", () => {
+  it("returns null for empty records", () => {
+    assert.equal(generateSyntheticDiff([], "/tmp"), null);
+  });
+
+  it("returns null when no edit/write records", () => {
+    const records: ToolCallRecord[] = [
+      { toolName: "read", args: { path: "foo.ts" }, startTime: 0 },
+    ];
+    assert.equal(generateSyntheticDiff(records, "/tmp"), null);
+  });
+
+  it("generates diff from edit tool args", () => {
+    const records: ToolCallRecord[] = [
+      {
+        toolName: "edit",
+        args: { path: "src/foo.ts", oldText: "return 'old';", newText: "return 'new';" },
+        startTime: 0,
+      },
+    ];
+    const result = generateSyntheticDiff(records, "/tmp");
+    assert.ok(result);
+    assert.equal(result.fileCount, 1);
+    assert.ok(result.diff.includes("-return 'old';"));
+    assert.ok(result.diff.includes("+return 'new';"));
+    assert.ok(result.diff.includes("src/foo.ts"));
+  });
+
+  it("generates diff from write tool args", () => {
+    const records: ToolCallRecord[] = [
+      {
+        toolName: "write",
+        args: { path: "NOTES.md", content: "# Notes\n\nCollaboration doc" },
+        startTime: 0,
+      },
+    ];
+    const result = generateSyntheticDiff(records, "/tmp");
+    assert.ok(result);
+    assert.equal(result.fileCount, 1);
+    assert.ok(result.diff.includes("NOTES.md"));
+    assert.ok(result.diff.includes("+# Notes"));
+    assert.ok(result.diff.includes("+Collaboration doc"));
+  });
+
+  it("deduplicates multiple writes to the same file (keeps last)", () => {
+    const records: ToolCallRecord[] = [
+      { toolName: "write", args: { path: "doc.md", content: "v1" }, startTime: 0 },
+      { toolName: "write", args: { path: "doc.md", content: "v2" }, startTime: 1 },
+    ];
+    const result = generateSyntheticDiff(records, "/tmp");
+    assert.ok(result);
+    assert.equal(result.fileCount, 1);
+    assert.ok(result.diff.includes("+v2"));
+    assert.ok(!result.diff.includes("+v1"));
+  });
+
+  it("combines edit and write tool diffs", () => {
+    const records: ToolCallRecord[] = [
+      { toolName: "edit", args: { path: "a.ts", oldText: "old", newText: "new" }, startTime: 0 },
+      { toolName: "write", args: { path: "b.md", content: "hello" }, startTime: 1 },
+    ];
+    const result = generateSyntheticDiff(records, "/tmp");
+    assert.ok(result);
+    assert.equal(result.fileCount, 2);
   });
 });
 
