@@ -1,4 +1,4 @@
-import { describe, it, mock, beforeEach, afterEach } from "node:test";
+import { describe, it, vi, beforeEach, afterEach } from "vitest";
 import assert from "node:assert/strict";
 import { basename } from "path";
 import { homedir } from "os";
@@ -46,12 +46,12 @@ function makeSession(threadTs: string) {
     messageCount: 0,
     model: undefined,
     thinkingLevel: "off" as const,
-    enqueue: mock.fn((fn: () => Promise<void>) => {}),
-    dispose: mock.fn(async () => {}),
-    abort: mock.fn(),
-    newSession: mock.fn(async () => {}),
-    prompt: mock.fn(async () => {}),
-    subscribe: mock.fn(() => () => {}),
+    enqueue: vi.fn((fn: () => Promise<void>) => {}),
+    dispose: vi.fn(async () => {}),
+    abort: vi.fn(),
+    newSession: vi.fn(async () => {}),
+    prompt: vi.fn(async () => {}),
+    subscribe: vi.fn(() => () => {}),
   };
 }
 
@@ -59,7 +59,7 @@ function makeManager(configOverrides: Partial<Config> = {}) {
   const config = { ...baseConfig, ...configOverrides };
   const sessions = new Map<string, ReturnType<typeof makeSession>>();
 
-  const factory = mock.fn(async (params: any) => {
+  const factory = vi.fn(async (params: any) => {
     const s = makeSession(params.threadTs);
     s.cwd = params.cwd;
     sessions.set(params.threadTs, s);
@@ -79,12 +79,12 @@ function makeMockClient() {
     posted,
     updated,
     chat: {
-      postMessage: mock.fn(async (opts: any) => {
+      postMessage: vi.fn(async (opts: any) => {
         const ts = `msg-${posted.length}`;
         posted.push({ ...opts, ts });
         return { ts };
       }),
-      update: mock.fn(async (opts: any) => {
+      update: vi.fn(async (opts: any) => {
         updated.push(opts);
         return { ok: true };
       }),
@@ -95,7 +95,7 @@ function makeMockClient() {
 describe("slack.ts — new thread always opens cwd picker", () => {
   it("posts cwd picker with projects as pins", async () => {
     const client = makeMockClient();
-    const onSelect = mock.fn();
+    const onSelect = vi.fn();
     const projects = [
       { path: "/workplace/my-cool-project", label: "my-cool-project" },
       { path: "/workplace/other-thing", label: "other-thing" },
@@ -133,7 +133,7 @@ describe("slack.ts — new thread always opens cwd picker", () => {
 
   it("posts cwd picker at homedir when no startDir given", async () => {
     const client = makeMockClient();
-    const onSelect = mock.fn();
+    const onSelect = vi.fn();
 
     await postCwdPicker({
       client,
@@ -190,7 +190,7 @@ describe("slack.ts cwd picker select handler", () => {
     const session = sessions.get("T1");
     assert.ok(session);
     assert.equal(session!.cwd, selectedCwd);
-    assert.equal(session!.enqueue.mock.callCount(), 1);
+    assert.equal(session!.enqueue.mock.calls.length, 1);
   });
 
   it("ignores select if no pending pick exists", async () => {

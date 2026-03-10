@@ -1,4 +1,4 @@
-import { describe, it, mock, beforeEach, afterEach } from "node:test";
+import { describe, it, vi, beforeEach, afterEach } from "vitest";
 import assert from "node:assert/strict";
 import { mkdirSync, writeFileSync, rmSync } from "fs";
 import { join } from "path";
@@ -30,12 +30,12 @@ function makeMockClient() {
     posted,
     updated,
     chat: {
-      postMessage: mock.fn(async (opts: any) => {
+      postMessage: vi.fn(async (opts: any) => {
         const ts = `msg-${posted.length}`;
         posted.push({ ...opts, ts });
         return { ts };
       }),
-      update: mock.fn(async (opts: any) => {
+      update: vi.fn(async (opts: any) => {
         updated.push(opts);
         return { ok: true };
       }),

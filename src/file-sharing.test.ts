@@ -1,4 +1,4 @@
-import { describe, it, before, after, mock } from "node:test";
+import { describe, it, beforeAll, afterAll, vi } from "vitest";
 import assert from "node:assert/strict";
 import { mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from "fs";
 import { join } from "path";
@@ -19,11 +19,11 @@ import {
 
 const TEST_DIR = join(tmpdir(), `file-sharing-test-${Date.now()}`);
 
-before(() => {
+beforeAll(() => {
   mkdirSync(TEST_DIR, { recursive: true });
 });
 
-after(() => {
+afterAll(() => {
   rmSync(TEST_DIR, { recursive: true, force: true });
 });
 

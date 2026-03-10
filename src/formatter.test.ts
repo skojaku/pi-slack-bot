@@ -1,4 +1,4 @@
-import { describe, it } from "node:test";
+import { describe, it } from "vitest";
 import assert from "node:assert/strict";
 import { markdownToMrkdwn, splitMrkdwn, formatToolStart, formatToolEnd, formatToolLog, formatToolArgs, convertMarkdownTables, type ToolCallRecord } from "./formatter.js";
 

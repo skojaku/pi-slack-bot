@@ -1,4 +1,4 @@
-import { describe, it, mock, beforeEach, afterEach } from "node:test";
+import { describe, it, vi, beforeEach, afterEach } from "vitest";
 import assert from "node:assert/strict";
 import { BotSessionManager, SessionLimitError } from "./session-manager.js";
 import type { Config } from "./config.js";
@@ -28,12 +28,12 @@ function makeSession(threadTs: string) {
     messageCount: 0,
     model: undefined,
     thinkingLevel: "off" as const,
-    enqueue: mock.fn(),
-    dispose: mock.fn(async () => {}),
-    abort: mock.fn(),
-    newSession: mock.fn(async () => {}),
-    prompt: mock.fn(async () => {}),
-    subscribe: mock.fn(() => () => {}),
+    enqueue: vi.fn(),
+    dispose: vi.fn(async () => {}),
+    abort: vi.fn(),
+    newSession: vi.fn(async () => {}),
+    prompt: vi.fn(async () => {}),
+    subscribe: vi.fn(() => () => {}),
   };
 }
 
@@ -42,7 +42,7 @@ function makeManager(configOverrides: Partial<Config> = {}) {
   const client = {} as any;
   const sessions = new Map<string, ReturnType<typeof makeSession>>();
 
-  const factory = mock.fn(async (params: any) => {
+  const factory = vi.fn(async (params: any) => {
     const s = makeSession(params.threadTs);
     sessions.set(params.threadTs, s);
     return s as any;

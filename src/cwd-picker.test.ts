@@ -1,4 +1,4 @@
-import { describe, it, mock, beforeEach, afterEach } from "node:test";
+import { describe, it, vi, beforeEach, afterEach } from "vitest";
 import assert from "node:assert/strict";
 import { mkdirSync, writeFileSync, rmSync } from "fs";
 import { join } from "path";
@@ -36,12 +36,12 @@ function makeMockClient() {
     posted,
     updated,
     chat: {
-      postMessage: mock.fn(async (opts: any) => {
+      postMessage: vi.fn(async (opts: any) => {
         const ts = `msg-${posted.length}`;
         posted.push({ ...opts, ts });
         return { ts };
       }),
-      update: mock.fn(async (opts: any) => {
+      update: vi.fn(async (opts: any) => {
         updated.push(opts);
         return { ok: true };
       }),
@@ -206,7 +206,7 @@ describe("postCwdPicker", () => {
 
   it("posts a message and registers a pending pick", async () => {
     const client = makeMockClient();
-    const onSelect = mock.fn();
+    const onSelect = vi.fn();
 
     await postCwdPicker({
       client,
@@ -237,7 +237,7 @@ describe("postCwdPicker", () => {
 
   it("defaults to homedir when no startDir", async () => {
     const client = makeMockClient();
-    const onSelect = mock.fn();
+    const onSelect = vi.fn();
     const { homedir } = await import("os");
 
     await postCwdPicker({
@@ -273,7 +273,7 @@ describe("handleCwdSelect", () => {
 
   it("calls onSelect with the selected directory", async () => {
     const client = makeMockClient();
-    const onSelect = mock.fn();
+    const onSelect = vi.fn();
 
     await postCwdPicker({
       client,
@@ -289,15 +289,15 @@ describe("handleCwdSelect", () => {
     const messageTs = client.posted[0].ts;
     await handleCwdSelect(messageTs, join(tmpBase, "alpha"));
 
-    assert.equal(onSelect.mock.callCount(), 1);
-    const [pick, selectedDir] = onSelect.mock.calls[0].arguments;
+    assert.equal(onSelect.mock.calls.length, 1);
+    const [pick, selectedDir] = onSelect.mock.calls[0];
     assert.equal(selectedDir, join(tmpBase, "alpha"));
     assert.equal(pick.prompt, "do stuff");
   });
 
   it("updates the picker message to show selection", async () => {
     const client = makeMockClient();
-    const onSelect = mock.fn();
+    const onSelect = vi.fn();
 
     await postCwdPicker({
       client,
@@ -320,7 +320,7 @@ describe("handleCwdSelect", () => {
 
   it("removes the pending pick after selection", async () => {
     const client = makeMockClient();
-    const onSelect = mock.fn();
+    const onSelect = vi.fn();
 
     await postCwdPicker({
       client,
@@ -362,7 +362,7 @@ describe("handleCwdNav", () => {
 
   it("updates the picker message with the new directory listing", async () => {
     const client = makeMockClient();
-    const onSelect = mock.fn();
+    const onSelect = vi.fn();
 
     await postCwdPicker({
       client,
@@ -385,7 +385,7 @@ describe("handleCwdNav", () => {
 
   it("updates currentDir on the pending pick", async () => {
     const client = makeMockClient();
-    const onSelect = mock.fn();
+    const onSelect = vi.fn();
 
     await postCwdPicker({
       client,
@@ -431,7 +431,7 @@ describe("handleCwdCancel", () => {
 
   it("updates the picker message to show cancellation", async () => {
     const client = makeMockClient();
-    const onSelect = mock.fn();
+    const onSelect = vi.fn();
 
     await postCwdPicker({
       client,
@@ -454,7 +454,7 @@ describe("handleCwdCancel", () => {
 
   it("removes the pending pick after cancellation", async () => {
     const client = makeMockClient();
-    const onSelect = mock.fn();
+    const onSelect = vi.fn();
 
     await postCwdPicker({
       client,
@@ -475,7 +475,7 @@ describe("handleCwdCancel", () => {
 
   it("does not call onSelect", async () => {
     const client = makeMockClient();
-    const onSelect = mock.fn();
+    const onSelect = vi.fn();
 
     await postCwdPicker({
       client,
@@ -491,7 +491,7 @@ describe("handleCwdCancel", () => {
     const messageTs = client.posted[0].ts;
     await handleCwdCancel(messageTs);
 
-    assert.equal(onSelect.mock.callCount(), 0);
+    assert.equal(onSelect.mock.calls.length, 0);
   });
 
   it("ignores unknown message ts", async () => {
@@ -533,7 +533,7 @@ describe("full navigation flow", () => {
 
   it("navigate down, then select", async () => {
     const client = makeMockClient();
-    const onSelect = mock.fn();
+    const onSelect = vi.fn();
 
     await postCwdPicker({
       client,
@@ -559,15 +559,15 @@ describe("full navigation flow", () => {
     // Select current directory
     await handleCwdSelect(messageTs, join(tmpBase, "alpha", "inner"));
 
-    assert.equal(onSelect.mock.callCount(), 1);
-    const [pick, dir] = onSelect.mock.calls[0].arguments;
+    assert.equal(onSelect.mock.calls.length, 1);
+    const [pick, dir] = onSelect.mock.calls[0];
     assert.equal(dir, join(tmpBase, "alpha", "inner"));
     assert.equal(pick.prompt, "my task");
   });
 
   it("navigate down, then back to parent, then select", async () => {
     const client = makeMockClient();
-    const onSelect = mock.fn();
+    const onSelect = vi.fn();
     const { dirname } = await import("path");
 
     await postCwdPicker({
@@ -595,12 +595,12 @@ describe("full navigation flow", () => {
 
     // Select
     await handleCwdSelect(messageTs, tmpBase);
-    assert.equal(onSelect.mock.calls[0].arguments[1], tmpBase);
+    assert.equal(onSelect.mock.calls[0][1], tmpBase);
   });
 
   it("jump to pinned project via nav", async () => {
     const client = makeMockClient();
-    const onSelect = mock.fn();
+    const onSelect = vi.fn();
     const pinnedDir = join(tmpBase, "beta");
 
     await postCwdPicker({
@@ -624,6 +624,6 @@ describe("full navigation flow", () => {
 
     // Select it
     await handleCwdSelect(messageTs, pinnedDir);
-    assert.equal(onSelect.mock.calls[0].arguments[1], pinnedDir);
+    assert.equal(onSelect.mock.calls[0][1], pinnedDir);
   });
 });

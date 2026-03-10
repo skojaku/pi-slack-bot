@@ -1,4 +1,4 @@
-import { describe, it, mock, beforeEach, afterEach } from "node:test";
+import { describe, it, vi, beforeEach, afterEach } from "vitest";
 import assert from "node:assert/strict";
 import { StreamingUpdater } from "./streaming-updater.js";
 import type { StreamingState } from "./streaming-updater.js";
@@ -6,15 +6,15 @@ import type { StreamingState } from "./streaming-updater.js";
 function makeClient() {
   return {
     chat: {
-      postMessage: mock.fn(async () => ({ ts: "msg-1" })),
-      update: mock.fn(async () => ({})),
+      postMessage: vi.fn(async () => ({ ts: "msg-1" })),
+      update: vi.fn(async () => ({})),
     },
     reactions: {
-      add: mock.fn(async () => ({})),
-      remove: mock.fn(async () => ({})),
+      add: vi.fn(async () => ({})),
+      remove: vi.fn(async () => ({})),
     },
     files: {
-      uploadV2: mock.fn(async () => ({})),
+      uploadV2: vi.fn(async () => ({})),
     },
   } as any;
 }
@@ -61,13 +61,13 @@ describe("StreamingUpdater", () => {
 
     const state = await updater.begin("C1", "ts1");
 
-    assert.equal(client.chat.postMessage.mock.callCount(), 1);
-    assert.deepEqual(client.chat.postMessage.mock.calls[0].arguments[0], {
+    assert.equal(client.chat.postMessage.mock.calls.length, 1);
+    assert.deepEqual(client.chat.postMessage.mock.calls[0][0], {
       channel: "C1",
       thread_ts: "ts1",
       text: "⏳ Thinking...",
     });
-    assert.equal(client.reactions.add.mock.callCount(), 1);
+    assert.equal(client.reactions.add.mock.calls.length, 1);
     assert.equal(state.currentMessageTs, "msg-1");
     assert.equal(state.rawMarkdown, "");
   });
@@ -90,8 +90,8 @@ describe("StreamingUpdater", () => {
     // Wait for the async flush
     await new Promise((r) => realSetTimeout(r, 10));
 
-    assert.equal(client.chat.update.mock.callCount(), 1);
-    const updateCall = client.chat.update.mock.calls[0].arguments[0];
+    assert.equal(client.chat.update.mock.calls.length, 1);
+    const updateCall = client.chat.update.mock.calls[0][0];
     assert.equal(updateCall.ts, "msg-1");
     assert.ok(updateCall.text.includes("Hello world!"));
   });
@@ -107,7 +107,7 @@ describe("StreamingUpdater", () => {
     flushTimers();
     await new Promise((r) => realSetTimeout(r, 10));
 
-    assert.equal(client.chat.update.mock.callCount(), 1);
+    assert.equal(client.chat.update.mock.calls.length, 1);
 
     // Second window
     updater.appendText(state, " Second");
@@ -115,7 +115,7 @@ describe("StreamingUpdater", () => {
     flushTimers();
     await new Promise((r) => realSetTimeout(r, 10));
 
-    assert.equal(client.chat.update.mock.callCount(), 2);
+    assert.equal(client.chat.update.mock.calls.length, 2);
   });
 
   it("finalize does final flush and swaps reactions", async () => {
@@ -133,17 +133,17 @@ describe("StreamingUpdater", () => {
     assert.equal(timers.length, 0);
 
     // Final flush happened
-    assert.equal(client.chat.update.mock.callCount(), 1);
+    assert.equal(client.chat.update.mock.calls.length, 1);
 
     // Reactions swapped: hourglass removed, checkmark added
-    assert.equal(client.reactions.remove.mock.callCount(), 1);
+    assert.equal(client.reactions.remove.mock.calls.length, 1);
     assert.equal(
-      client.reactions.remove.mock.calls[0].arguments[0].name,
+      client.reactions.remove.mock.calls[0][0].name,
       "hourglass_flowing_sand",
     );
-    assert.equal(client.reactions.add.mock.callCount(), 2); // 1 from begin + 1 from finalize
+    assert.equal(client.reactions.add.mock.calls.length, 2); // 1 from begin + 1 from finalize
     assert.equal(
-      client.reactions.add.mock.calls[1].arguments[0].name,
+      client.reactions.add.mock.calls[1][0].name,
       "white_check_mark",
     );
   });
@@ -155,12 +155,12 @@ describe("StreamingUpdater", () => {
 
     await updater.error(state, new Error("something broke"));
 
-    assert.equal(client.chat.postMessage.mock.callCount(), 2); // begin + error
-    const errCall = client.chat.postMessage.mock.calls[1].arguments[0];
+    assert.equal(client.chat.postMessage.mock.calls.length, 2); // begin + error
+    const errCall = client.chat.postMessage.mock.calls[1][0];
     assert.equal(errCall.text, "❌ Error: something broke");
     assert.equal(errCall.thread_ts, "ts1");
 
-    assert.equal(client.reactions.remove.mock.callCount(), 1);
+    assert.equal(client.reactions.remove.mock.calls.length, 1);
   });
 
   it("appendToolStart and appendToolEnd appear in flushed output", async () => {
@@ -174,14 +174,14 @@ describe("StreamingUpdater", () => {
     // Tool start triggers immediate flush (no timer needed)
     await new Promise((r) => realSetTimeout(r, 10));
 
-    const text1 = client.chat.update.mock.calls[0].arguments[0].text;
+    const text1 = client.chat.update.mock.calls[0][0].text;
     assert.ok(text1.includes("🔧"), "should contain tool start icon");
     assert.ok(text1.includes("read_file"), "should contain tool name");
 
     updater.appendToolEnd(state, "read_file", false);
     await new Promise((r) => realSetTimeout(r, 10));
 
-    const text2 = client.chat.update.mock.calls[1].arguments[0].text;
+    const text2 = client.chat.update.mock.calls[1][0].text;
     assert.ok(text2.includes("✓"), "should contain completed tool mark");
     assert.ok(!text2.includes("🔧"), "wrench should be gone");
   });
@@ -216,8 +216,8 @@ describe("StreamingUpdater", () => {
     await updater.finalize(state);
 
     // Should upload a file snippet
-    assert.equal(client.files.uploadV2.mock.callCount(), 1);
-    const uploadCall = client.files.uploadV2.mock.calls[0].arguments[0];
+    assert.equal(client.files.uploadV2.mock.calls.length, 1);
+    const uploadCall = client.files.uploadV2.mock.calls[0][0];
     assert.equal(uploadCall.channel_id, "C1");
     assert.equal(uploadCall.thread_ts, "ts1");
     assert.equal(uploadCall.filename, "tool-activity.txt");
@@ -234,7 +234,7 @@ describe("StreamingUpdater", () => {
     updater.appendText(state, "Just text, no tools");
     await updater.finalize(state);
 
-    assert.equal(client.files.uploadV2.mock.callCount(), 0);
+    assert.equal(client.files.uploadV2.mock.calls.length, 0);
   });
 
   it("finalize includes tool summary in final message text", async () => {
@@ -252,7 +252,7 @@ describe("StreamingUpdater", () => {
 
     // Get the final chat.update call (last one)
     const updateCalls = client.chat.update.mock.calls;
-    const finalUpdate = updateCalls[updateCalls.length - 1].arguments[0];
+    const finalUpdate = updateCalls[updateCalls.length - 1][0];
     assert.ok(!finalUpdate.text.includes("🔧"), "final message should not have tool wrench");
     assert.ok(finalUpdate.text.includes("Result text"), "final message should have response text");
     assert.ok(finalUpdate.text.includes("📋"), "final message should have tool summary line");
@@ -261,7 +261,7 @@ describe("StreamingUpdater", () => {
 
   it("snippet upload failure does not break finalize", async () => {
     const client = makeClient();
-    client.files.uploadV2 = mock.fn(async () => { throw new Error("upload failed"); });
+    client.files.uploadV2 = vi.fn(async () => { throw new Error("upload failed"); });
     const updater = new StreamingUpdater(client, 3000);
     const state = await updater.begin("C1", "ts1");
 
@@ -275,8 +275,8 @@ describe("StreamingUpdater", () => {
     await updater.finalize(state);
 
     // Reactions should still be updated
-    assert.equal(client.reactions.remove.mock.callCount(), 1);
-    assert.equal(client.reactions.add.mock.callCount(), 2);
+    assert.equal(client.reactions.remove.mock.calls.length, 1);
+    assert.equal(client.reactions.add.mock.calls.length, 2);
   });
 
   it("tool start triggers immediate flush bypassing throttle timer", async () => {
@@ -293,8 +293,8 @@ describe("StreamingUpdater", () => {
     assert.equal(timers.length, 0);
 
     await new Promise((r) => realSetTimeout(r, 10));
-    assert.equal(client.chat.update.mock.callCount(), 1);
-    const text = client.chat.update.mock.calls[0].arguments[0].text;
+    assert.equal(client.chat.update.mock.calls.length, 1);
+    const text = client.chat.update.mock.calls[0][0].text;
     assert.ok(text.includes("Some text"), "should include text content");
     assert.ok(text.includes("bash"), "should include tool name");
   });
@@ -306,7 +306,7 @@ describe("StreamingUpdater", () => {
 
     updater.appendToolStart(state, "read_file", { path: "/a.ts" });
     await new Promise((r) => realSetTimeout(r, 10));
-    assert.equal(client.chat.update.mock.callCount(), 1);
+    assert.equal(client.chat.update.mock.calls.length, 1);
 
     // Append text to schedule a throttle timer
     updater.appendText(state, "reading...");
@@ -317,8 +317,8 @@ describe("StreamingUpdater", () => {
     assert.equal(timers.length, 0);
 
     await new Promise((r) => realSetTimeout(r, 10));
-    assert.equal(client.chat.update.mock.callCount(), 2);
-    const text = client.chat.update.mock.calls[1].arguments[0].text;
+    assert.equal(client.chat.update.mock.calls.length, 2);
+    const text = client.chat.update.mock.calls[1][0].text;
     assert.ok(text.includes("✗"), "should show failed tool mark");
     assert.ok(!text.includes("🔧"), "wrench should be gone");
   });
@@ -333,7 +333,7 @@ describe("StreamingUpdater", () => {
 
     await new Promise((r) => realSetTimeout(r, 10));
 
-    const text = client.chat.update.mock.calls[0].arguments[0].text;
+    const text = client.chat.update.mock.calls[0][0].text;
     const textIdx = text.indexOf("Here is some text");
     const toolIdx = text.indexOf("write_file");
     assert.ok(textIdx >= 0, "text content should be present");
@@ -350,13 +350,13 @@ describe("StreamingUpdater", () => {
     state.timer = null;
     await updater.finalize(state);
 
-    assert.equal(client.chat.update.mock.callCount(), 0);
+    assert.equal(client.chat.update.mock.calls.length, 0);
   });
 
   it("content exceeding msgLimit triggers split and posts overflow as new messages", async () => {
     const client = makeClient();
     let postCount = 0;
-    client.chat.postMessage = mock.fn(async () => ({ ts: `msg-${++postCount}` }));
+    client.chat.postMessage = vi.fn(async () => ({ ts: `msg-${++postCount}` }));
 
     // Use a small limit to easily trigger splitting
     const updater = new StreamingUpdater(client, 3000, 100);
@@ -371,22 +371,22 @@ describe("StreamingUpdater", () => {
     await new Promise((r) => realSetTimeout(r, 10));
 
     // First chunk via chat.update on the original message
-    assert.equal(client.chat.update.mock.callCount(), 1);
-    assert.equal(client.chat.update.mock.calls[0].arguments[0].ts, "msg-1");
+    assert.equal(client.chat.update.mock.calls.length, 1);
+    assert.equal(client.chat.update.mock.calls[0][0].ts, "msg-1");
 
     // Overflow chunk(s) posted as new thread replies
     // postMessage: 1 from begin + at least 1 overflow
-    assert.ok(client.chat.postMessage.mock.callCount() >= 2, "should post overflow chunk(s)");
+    assert.ok(client.chat.postMessage.mock.calls.length >= 2, "should post overflow chunk(s)");
 
     // The overflow postMessage should be in the same thread
-    const overflowCall = client.chat.postMessage.mock.calls[1].arguments[0];
+    const overflowCall = client.chat.postMessage.mock.calls[1][0];
     assert.equal(overflowCall.thread_ts, "ts1");
   });
 
   it("currentMessageTs updated to last overflow message ts", async () => {
     const client = makeClient();
     let postCount = 0;
-    client.chat.postMessage = mock.fn(async () => ({ ts: `msg-${++postCount}` }));
+    client.chat.postMessage = vi.fn(async () => ({ ts: `msg-${++postCount}` }));
 
     const updater = new StreamingUpdater(client, 3000, 100);
     const state = await updater.begin("C1", "ts1");
@@ -409,7 +409,7 @@ describe("StreamingUpdater", () => {
   it("finalize reactions target initialMessageTs even after split", async () => {
     const client = makeClient();
     let postCount = 0;
-    client.chat.postMessage = mock.fn(async () => ({ ts: `msg-${++postCount}` }));
+    client.chat.postMessage = vi.fn(async () => ({ ts: `msg-${++postCount}` }));
 
     const updater = new StreamingUpdater(client, 3000, 100);
     const state = await updater.begin("C1", "ts1");
@@ -421,11 +421,11 @@ describe("StreamingUpdater", () => {
     await updater.finalize(state);
 
     // Reactions should target the initial message (msg-1), not the overflow
-    const removeCall = client.reactions.remove.mock.calls[0].arguments[0];
+    const removeCall = client.reactions.remove.mock.calls[0][0];
     assert.equal(removeCall.timestamp, "msg-1");
 
     const addCalls = client.reactions.add.mock.calls;
-    const checkmarkCall = addCalls[addCalls.length - 1].arguments[0];
+    const checkmarkCall = addCalls[addCalls.length - 1][0];
     assert.equal(checkmarkCall.timestamp, "msg-1");
     assert.equal(checkmarkCall.name, "white_check_mark");
   });
@@ -433,7 +433,7 @@ describe("StreamingUpdater", () => {
   it("retries with lower limit on msg_too_long from chat.update", async () => {
     const client = makeClient();
     let updateAttempt = 0;
-    client.chat.update = mock.fn(async (args: any) => {
+    client.chat.update = vi.fn(async (args: any) => {
       updateAttempt++;
       // Fail on first attempt, succeed on retry
       if (updateAttempt === 1) {
@@ -445,7 +445,7 @@ describe("StreamingUpdater", () => {
     });
 
     let postCount = 0;
-    client.chat.postMessage = mock.fn(async () => ({ ts: `msg-${++postCount}` }));
+    client.chat.postMessage = vi.fn(async () => ({ ts: `msg-${++postCount}` }));
 
     const updater = new StreamingUpdater(client, 3000, 200);
     const state = await updater.begin("C1", "ts1");
@@ -461,7 +461,7 @@ describe("StreamingUpdater", () => {
   it("subsequent flushes after split update in-place instead of posting new messages", async () => {
     const client = makeClient();
     let postCount = 0;
-    client.chat.postMessage = mock.fn(async () => ({ ts: `msg-${++postCount}` }));
+    client.chat.postMessage = vi.fn(async () => ({ ts: `msg-${++postCount}` }));
 
     const updater = new StreamingUpdater(client, 3000, 100);
     const state = await updater.begin("C1", "ts1");
@@ -473,8 +473,8 @@ describe("StreamingUpdater", () => {
     flushTimers();
     await new Promise((r) => realSetTimeout(r, 10));
 
-    const postCountAfterFirst = client.chat.postMessage.mock.callCount();
-    const updateCountAfterFirst = client.chat.update.mock.callCount();
+    const postCountAfterFirst = client.chat.postMessage.mock.calls.length;
+    const updateCountAfterFirst = client.chat.update.mock.calls.length;
 
     // Second flush: append more text, still splits into 2 chunks
     updater.appendText(state, " more");
@@ -483,19 +483,19 @@ describe("StreamingUpdater", () => {
 
     // Should have used chat.update for BOTH existing messages, no new postMessage
     assert.equal(
-      client.chat.postMessage.mock.callCount(),
+      client.chat.postMessage.mock.calls.length,
       postCountAfterFirst,
       "should NOT post new messages on subsequent flush — should update in place",
     );
     assert.ok(
-      client.chat.update.mock.callCount() > updateCountAfterFirst,
+      client.chat.update.mock.calls.length > updateCountAfterFirst,
       "should update existing messages",
     );
 
     // Verify both messages are updated (msg-1 and msg-2)
     const updateCalls = client.chat.update.mock.calls;
     const lastTwoUpdates = updateCalls.slice(-2);
-    const updatedTimestamps = lastTwoUpdates.map((c: any) => c.arguments[0].ts);
+    const updatedTimestamps = lastTwoUpdates.map((c: any) => c[0].ts);
     assert.ok(updatedTimestamps.includes("msg-1"), "should update the initial message");
     assert.ok(updatedTimestamps.includes("msg-2"), "should update the continuation message");
   });
@@ -508,7 +508,7 @@ describe("StreamingUpdater", () => {
     const longMsg = "X".repeat(5000);
     await updater.error(state, new Error(longMsg));
 
-    const errCall = client.chat.postMessage.mock.calls[1].arguments[0];
+    const errCall = client.chat.postMessage.mock.calls[1][0];
     assert.ok(errCall.text.length < 200, `error text should be truncated, got ${errCall.text.length}`);
     assert.ok(errCall.text.endsWith("..."), "should end with ...");
   });

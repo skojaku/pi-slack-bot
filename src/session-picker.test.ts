@@ -1,4 +1,4 @@
-import { describe, it, beforeEach, mock } from "node:test";
+import { describe, it, beforeEach, vi } from "vitest";
 import assert from "node:assert/strict";
 import {
   getPendingResume,
@@ -17,11 +17,11 @@ function fakeClient() {
   const updated: any[] = [];
   return {
     chat: {
-      postMessage: mock.fn(async (args: any) => {
+      postMessage: vi.fn(async (args: any) => {
         posted.push(args);
         return { ts: `msg_${posted.length}` };
       }),
-      update: mock.fn(async (args: any) => {
+      update: vi.fn(async (args: any) => {
         updated.push(args);
       }),
     },
@@ -32,8 +32,8 @@ function fakeClient() {
 
 function fakeSessionManager() {
   return {
-    get: mock.fn(() => undefined),
-    getOrCreate: mock.fn(async (params: any) => ({
+    get: vi.fn(() => undefined),
+    getOrCreate: vi.fn(async (params: any) => ({
       threadTs: params.threadTs,
       channelId: params.channelId,
       cwd: params.cwd,
@@ -42,11 +42,11 @@ function fakeSessionManager() {
       thinkingLevel: "off",
       lastActivity: new Date(),
       isStreaming: false,
-      enqueue: mock.fn(),
-      prompt: mock.fn(),
-      dispose: mock.fn(),
+      enqueue: vi.fn(),
+      prompt: vi.fn(),
+      dispose: vi.fn(),
     })),
-    dispose: mock.fn(),
+    dispose: vi.fn(),
     sessionDir: "/tmp/test-sessions",
   } as any;
 }

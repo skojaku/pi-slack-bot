@@ -1,4 +1,4 @@
-import { describe, it, mock, beforeEach } from "node:test";
+import { describe, it, vi, beforeEach } from "vitest";
 import assert from "node:assert/strict";
 import { tmpdir } from "os";
 import { mkdirSync, rmSync } from "fs";
@@ -46,7 +46,7 @@ function makeCtx(overrides: Partial<CommandContext> = {}): CommandContext {
   const posted: Array<{ channel: string; thread_ts: string; text: string }> = [];
   const client = {
     chat: {
-      postMessage: mock.fn(async (msg: any) => {
+      postMessage: vi.fn(async (msg: any) => {
         posted.push(msg);
         return { ok: true };
       }),
@@ -54,9 +54,9 @@ function makeCtx(overrides: Partial<CommandContext> = {}): CommandContext {
   } as any;
 
   const sessionManager = {
-    list: mock.fn(() => []),
-    dispose: mock.fn(async () => {}),
-    getOrCreate: mock.fn(async () => makeSession()),
+    list: vi.fn(() => []),
+    dispose: vi.fn(async () => {}),
+    getOrCreate: vi.fn(async () => makeSession()),
   } as any;
 
   return {
@@ -82,12 +82,12 @@ function makeSession(overrides: Record<string, any> = {}) {
     messageCount: 5,
     model: { id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5" },
     thinkingLevel: "off",
-    abort: mock.fn(),
-    newSession: mock.fn(async () => {}),
-    setModel: mock.fn(async () => {}),
-    setThinkingLevel: mock.fn(),
-    enqueue: mock.fn((fn: () => Promise<void>) => fn()),
-    prompt: mock.fn(async () => {}),
+    abort: vi.fn(),
+    newSession: vi.fn(async () => {}),
+    setModel: vi.fn(async () => {}),
+    setThinkingLevel: vi.fn(),
+    enqueue: vi.fn((fn: () => Promise<void>) => fn()),
+    prompt: vi.fn(async () => {}),
     ...overrides,
   } as any;
 }
@@ -124,7 +124,7 @@ describe("!new", () => {
     const session = makeSession();
     const ctx = makeCtx({ session });
     await dispatchCommand("new", "", ctx);
-    assert.equal(session.newSession.mock.callCount(), 1);
+    assert.equal(session.newSession.mock.calls.length, 1);
     assert.ok(getPosted(ctx)[0].includes("New session started"));
   });
 
@@ -140,7 +140,7 @@ describe("!cancel", () => {
     const session = makeSession();
     const ctx = makeCtx({ session });
     await dispatchCommand("cancel", "", ctx);
-    assert.equal(session.abort.mock.callCount(), 1);
+    assert.equal(session.abort.mock.calls.length, 1);
     assert.ok(getPosted(ctx)[0].includes("Cancelled"));
   });
 
@@ -175,8 +175,8 @@ describe("!model", () => {
     const session = makeSession();
     const ctx = makeCtx({ session });
     await dispatchCommand("model", "gpt-4o", ctx);
-    assert.equal(session.setModel.mock.callCount(), 1);
-    assert.equal(session.setModel.mock.calls[0].arguments[0], "gpt-4o");
+    assert.equal(session.setModel.mock.calls.length, 1);
+    assert.equal(session.setModel.mock.calls[0][0], "gpt-4o");
     assert.ok(getPosted(ctx)[0].includes("gpt-4o"));
   });
 
@@ -184,13 +184,13 @@ describe("!model", () => {
     const session = makeSession();
     const ctx = makeCtx({ session });
     await dispatchCommand("model", "", ctx);
-    assert.equal(session.setModel.mock.callCount(), 0);
+    assert.equal(session.setModel.mock.calls.length, 0);
     assert.ok(getPosted(ctx)[0].includes("claude-sonnet-4-5"));
   });
 
   it("reports error for unknown model", async () => {
     const session = makeSession({
-      setModel: mock.fn(async () => {
+      setModel: vi.fn(async () => {
         throw new Error("Unknown model: nope");
       }),
     });
@@ -211,8 +211,8 @@ describe("!thinking", () => {
     const session = makeSession();
     const ctx = makeCtx({ session });
     await dispatchCommand("thinking", "high", ctx);
-    assert.equal(session.setThinkingLevel.mock.callCount(), 1);
-    assert.equal(session.setThinkingLevel.mock.calls[0].arguments[0], "high");
+    assert.equal(session.setThinkingLevel.mock.calls.length, 1);
+    assert.equal(session.setThinkingLevel.mock.calls[0][0], "high");
     assert.ok(getPosted(ctx)[0].includes("high"));
   });
 
@@ -220,7 +220,7 @@ describe("!thinking", () => {
     const session = makeSession();
     const ctx = makeCtx({ session });
     await dispatchCommand("thinking", "turbo", ctx);
-    assert.equal(session.setThinkingLevel.mock.callCount(), 0);
+    assert.equal(session.setThinkingLevel.mock.calls.length, 0);
     assert.ok(getPosted(ctx)[0].includes("Invalid level"));
   });
 
@@ -234,7 +234,7 @@ describe("!thinking", () => {
 describe("!sessions", () => {
   it("lists active sessions", async () => {
     const sessionManager = {
-      list: mock.fn(() => [
+      list: vi.fn(() => [
         {
           threadTs: "ts1",
           channelId: "C1",
@@ -328,7 +328,7 @@ describe("unknown command", () => {
     const result = await dispatchCommand("foobar", "some args", ctx);
     assert.equal(result, true);
     // Should have enqueued a prompt
-    assert.equal(session.enqueue.mock.callCount(), 1);
+    assert.equal(session.enqueue.mock.calls.length, 1);
   });
 
   it("replies no active session when no session exists", async () => {

@@ -1,15 +1,15 @@
-import { describe, it, mock } from "node:test";
+import { describe, it, vi } from "vitest";
 import assert from "node:assert/strict";
 import { ThreadSession } from "./thread-session.js";
 
 // Minimal mock AgentSession
 function makeMockAgentSession() {
   return {
-    subscribe: mock.fn(() => () => {}),
-    prompt: mock.fn(async () => {}),
-    abort: mock.fn(async () => {}),
-    dispose: mock.fn(() => {}),
-    newSession: mock.fn(async () => true),
+    subscribe: vi.fn(() => () => {}),
+    prompt: vi.fn(async () => {}),
+    abort: vi.fn(async () => {}),
+    dispose: vi.fn(() => {}),
+    newSession: vi.fn(async () => true),
     isStreaming: false,
     messages: [],
     model: undefined,
@@ -19,7 +19,7 @@ function makeMockAgentSession() {
 
 function makeMockUpdater() {
   return {
-    begin: mock.fn(async () => ({
+    begin: vi.fn(async () => ({
       channelId: "C1",
       threadTs: "ts1",
       currentMessageTs: "msg-1",
@@ -29,16 +29,16 @@ function makeMockUpdater() {
       timer: null,
       retryCount: 0,
     })),
-    appendText: mock.fn(() => {}),
-    appendToolStart: mock.fn(() => {}),
-    appendToolEnd: mock.fn(() => {}),
-    finalize: mock.fn(async () => {}),
-    error: mock.fn(async () => {}),
+    appendText: vi.fn(() => {}),
+    appendToolStart: vi.fn(() => {}),
+    appendToolEnd: vi.fn(() => {}),
+    finalize: vi.fn(async () => {}),
+    error: vi.fn(async () => {}),
   };
 }
 
 function makeSession(agentSession = makeMockAgentSession(), updater = makeMockUpdater()) {
-  const client = { chat: { postMessage: mock.fn(async () => ({ ts: "1" })) } } as any;
+  const client = { chat: { postMessage: vi.fn(async () => ({ ts: "1" })) } } as any;
   return {
     session: new ThreadSession("ts1", "C1", "/tmp", client, agentSession as any, {} as any, updater as any),
     client,
@@ -208,8 +208,8 @@ describe("ThreadSession prompt event wiring", () => {
   it("tool_execution_start calls appendToolStart on updater", async () => {
     let handler: (event: any) => void = () => {};
     const agentSession = makeMockAgentSession();
-    (agentSession as any).subscribe = mock.fn((cb: any) => { handler = cb; return () => {}; });
-    (agentSession as any).prompt = mock.fn(async () => {
+    (agentSession as any).subscribe = vi.fn((cb: any) => { handler = cb; return () => {}; });
+    (agentSession as any).prompt = vi.fn(async () => {
       // Simulate agent_start → tool event → agent_end
       handler({ type: "agent_start" });
       // Wait for begin() to resolve
@@ -225,8 +225,8 @@ describe("ThreadSession prompt event wiring", () => {
 
     await session.prompt("read /foo.ts");
 
-    assert.equal(updater.appendToolStart.mock.callCount(), 1);
-    const tsArgs = updater.appendToolStart.mock.calls[0].arguments as unknown as any[];
+    assert.equal(updater.appendToolStart.mock.calls.length, 1);
+    const tsArgs = updater.appendToolStart.mock.calls[0] as unknown as any[];
     assert.equal(tsArgs[1], "read_file");
     assert.deepEqual(tsArgs[2], { path: "/foo.ts" });
   });
@@ -234,8 +234,8 @@ describe("ThreadSession prompt event wiring", () => {
   it("tool_execution_end calls appendToolEnd on updater", async () => {
     let handler: (event: any) => void = () => {};
     const agentSession = makeMockAgentSession();
-    (agentSession as any).subscribe = mock.fn((cb: any) => { handler = cb; return () => {}; });
-    (agentSession as any).prompt = mock.fn(async () => {
+    (agentSession as any).subscribe = vi.fn((cb: any) => { handler = cb; return () => {}; });
+    (agentSession as any).prompt = vi.fn(async () => {
       handler({ type: "agent_start" });
       await new Promise((r) => setTimeout(r, 10));
       handler({ type: "tool_execution_end", toolCallId: "tc1", toolName: "bash", result: {}, isError: true });
@@ -248,8 +248,8 @@ describe("ThreadSession prompt event wiring", () => {
 
     await session.prompt("run ls");
 
-    assert.equal(updater.appendToolEnd.mock.callCount(), 1);
-    const teArgs = updater.appendToolEnd.mock.calls[0].arguments as unknown as any[];
+    assert.equal(updater.appendToolEnd.mock.calls.length, 1);
+    const teArgs = updater.appendToolEnd.mock.calls[0] as unknown as any[];
     assert.equal(teArgs[1], "bash");
     assert.equal(teArgs[2], true);
   });
@@ -257,8 +257,8 @@ describe("ThreadSession prompt event wiring", () => {
   it("text_delta still calls appendText on updater", async () => {
     let handler: (event: any) => void = () => {};
     const agentSession = makeMockAgentSession();
-    (agentSession as any).subscribe = mock.fn((cb: any) => { handler = cb; return () => {}; });
-    (agentSession as any).prompt = mock.fn(async () => {
+    (agentSession as any).subscribe = vi.fn((cb: any) => { handler = cb; return () => {}; });
+    (agentSession as any).prompt = vi.fn(async () => {
       handler({ type: "agent_start" });
       await new Promise((r) => setTimeout(r, 10));
       handler({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "hello" } });
@@ -271,8 +271,8 @@ describe("ThreadSession prompt event wiring", () => {
 
     await session.prompt("hi");
 
-    assert.equal(updater.appendText.mock.callCount(), 1);
-    const atArgs = updater.appendText.mock.calls[0].arguments as unknown as any[];
+    assert.equal(updater.appendText.mock.calls.length, 1);
+    const atArgs = updater.appendText.mock.calls[0] as unknown as any[];
     assert.equal(atArgs[1], "hello");
   });
 
@@ -281,8 +281,8 @@ describe("ThreadSession prompt event wiring", () => {
     const agentSession = makeMockAgentSession();
     let turnCount = 0;
 
-    (agentSession as any).subscribe = mock.fn((cb: any) => { handler = cb; return () => {}; });
-    (agentSession as any).prompt = mock.fn(async () => {
+    (agentSession as any).subscribe = vi.fn((cb: any) => { handler = cb; return () => {}; });
+    (agentSession as any).prompt = vi.fn(async () => {
       turnCount++;
       // First call: extension command, triggers a follow-up turn async
       if (turnCount === 1) {
@@ -311,9 +311,9 @@ describe("ThreadSession prompt event wiring", () => {
 
     // Ralph loop runs in background — streaming should be suppressed.
     // The persistent subscriber skips begin/update/finalize when _ralphBackgroundActive is true.
-    assert.strictEqual(updater.begin.mock.callCount(), 0, "begin should NOT be called for background ralph turns");
-    assert.strictEqual(updater.appendText.mock.callCount(), 0, "appendText should NOT be called for background ralph turns");
-    assert.strictEqual(updater.finalize.mock.callCount(), 0, "finalize should NOT be called for background ralph turns");
+    assert.strictEqual(updater.begin.mock.calls.length, 0, "begin should NOT be called for background ralph turns");
+    assert.strictEqual(updater.appendText.mock.calls.length, 0, "appendText should NOT be called for background ralph turns");
+    assert.strictEqual(updater.finalize.mock.calls.length, 0, "finalize should NOT be called for background ralph turns");
     // But the ralph background flag should be set
     assert.ok((session as any)._ralphBackgroundActive, "ralph background mode should be active");
   });
