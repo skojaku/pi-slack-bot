@@ -12,6 +12,7 @@ import { homedir } from "os";
 import type { WebClient } from "@slack/web-api";
 import type { Project } from "./parser.js";
 import type { SlackFile } from "./file-sharing.js";
+import { truncLabel, chunk, MAX_SLACK_BLOCKS, type SlackBlock } from "./picker-utils.js";
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -102,23 +103,11 @@ export function listDirs(dir: string): DirEntry[] {
 /*  Build Slack blocks for the directory browser                       */
 /* ------------------------------------------------------------------ */
 
-function truncLabel(name: string, max = 60): string {
-  return name.length > max ? name.slice(0, max - 1) + "…" : name;
-}
-
-function chunk<T>(arr: T[], size: number): T[][] {
-  const result: T[][] = [];
-  for (let i = 0; i < arr.length; i += size) {
-    result.push(arr.slice(i, i + size));
-  }
-  return result;
-}
-
 export function buildCwdPickerBlocks(
   dir: string,
   projects: Project[],
-): Array<Record<string, unknown>> {
-  const blocks: Array<Record<string, unknown>> = [];
+): SlackBlock[] {
+  const blocks: SlackBlock[] = [];
 
   // Header with current path
   blocks.push({
@@ -127,7 +116,7 @@ export function buildCwdPickerBlocks(
   });
 
   // Control buttons: Select, Parent, Cancel
-  const controlElements: Array<Record<string, unknown>> = [
+  const controlElements: SlackBlock[] = [
     {
       type: "button",
       text: { type: "plain_text", text: "✅ Select this directory" },
@@ -197,8 +186,8 @@ export function buildCwdPickerBlocks(
   }
 
   // Slack has a 50-block limit; truncate if needed
-  if (blocks.length > 50) {
-    blocks.length = 49;
+  if (blocks.length > MAX_SLACK_BLOCKS) {
+    blocks.length = MAX_SLACK_BLOCKS - 1;
     blocks.push({
       type: "section",
       text: { type: "mrkdwn", text: "_…too many entries to display._" },

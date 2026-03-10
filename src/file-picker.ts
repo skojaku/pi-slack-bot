@@ -8,9 +8,10 @@
  */
 import { readdirSync, statSync } from "fs";
 import { resolve, join, dirname, basename } from "path";
-import { Type, type Static, type TSchema } from "@sinclair/typebox";
+import { Type, type Static } from "@sinclair/typebox";
 import type { WebClient } from "@slack/web-api";
 import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
+import { truncLabel, chunk, MAX_SLACK_BLOCKS, type SlackBlock } from "./picker-utils.js";
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -157,9 +158,9 @@ function listDir(dir: string): DirEntry[] {
   }
 }
 
-function buildPickerBlocks(dir: string, rootCwd: string): Array<Record<string, unknown>> {
+function buildPickerBlocks(dir: string, rootCwd: string): SlackBlock[] {
   const entries = listDir(dir);
-  const blocks: Array<Record<string, unknown>> = [];
+  const blocks: SlackBlock[] = [];
 
   blocks.push({
     type: "section",
@@ -167,7 +168,7 @@ function buildPickerBlocks(dir: string, rootCwd: string): Array<Record<string, u
   });
 
   // Navigation buttons: Up (if not at rootCwd)
-  const navElements: Array<Record<string, unknown>> = [];
+  const navElements: SlackBlock[] = [];
   const resolvedDir = resolve(dir);
   const resolvedRoot = resolve(rootCwd);
   if (resolvedDir !== resolvedRoot) {
@@ -232,8 +233,8 @@ function buildPickerBlocks(dir: string, rootCwd: string): Array<Record<string, u
   }
 
   // Slack has a 50-block limit; truncate if needed
-  if (blocks.length > 50) {
-    blocks.length = 49;
+  if (blocks.length > MAX_SLACK_BLOCKS) {
+    blocks.length = MAX_SLACK_BLOCKS - 1;
     blocks.push({
       type: "section",
       text: { type: "mrkdwn", text: "_…too many entries to display. Use a more specific startDir._" },
@@ -241,18 +242,6 @@ function buildPickerBlocks(dir: string, rootCwd: string): Array<Record<string, u
   }
 
   return blocks;
-}
-
-function truncLabel(name: string, max = 60): string {
-  return name.length > max ? name.slice(0, max - 1) + "…" : name;
-}
-
-function chunk<T>(arr: T[], size: number): T[][] {
-  const result: T[][] = [];
-  for (let i = 0; i < arr.length; i += size) {
-    result.push(arr.slice(i, i + size));
-  }
-  return result;
 }
 
 /* ------------------------------------------------------------------ */

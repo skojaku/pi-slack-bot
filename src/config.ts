@@ -1,5 +1,4 @@
-import { homedir } from "os";
-import { resolve } from "path";
+import { expandHome } from "./paths.js";
 
 export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
 
@@ -43,10 +42,6 @@ function optionalInt(name: string, defaultVal: number): number {
   const n = parseInt(val, 10);
   if (isNaN(n)) throw new Error(`Env var ${name} must be an integer, got: ${val}`);
   return n;
-}
-
-function expandHome(p: string): string {
-  return p.startsWith("~/") ? resolve(homedir(), p.slice(2)) : p;
 }
 
 const VALID_THINKING_LEVELS: ThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh"];

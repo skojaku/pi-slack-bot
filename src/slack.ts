@@ -177,139 +177,47 @@ export function createApp(config: Config): SlackApp {
     }
   });
 
-  /* ── CWD picker action handlers ──────────────────────────────────── */
+  /* ── Action handler helper ─────────────────────────────────────── */
 
-  // Select current directory as cwd
-  app.action("cwd_pick_select", async ({ action, body, ack }) => {
-    await ack();
-    if (action.type !== "button" || !("value" in action)) return;
-    if (body.type !== "block_actions") return;
-    const messageTs = body.message?.ts;
-    if (!messageTs) return;
-    await handleCwdSelect(messageTs, action.value!);
-  });
+  /** Register a Slack button action handler with standard boilerplate. */
+  function onButtonAction(
+    actionId: string | RegExp,
+    handler: (messageTs: string, value: string) => Promise<void>,
+    opts?: { noValue?: boolean },
+  ): void {
+    app.action(actionId, async ({ action, body, ack }) => {
+      await ack();
+      if (!opts?.noValue && (action.type !== "button" || !("value" in action))) return;
+      if (body.type !== "block_actions") return;
+      const messageTs = body.message?.ts;
+      if (!messageTs) return;
+      const value = action.type === "button" && "value" in action ? action.value! : "";
+      await handler(messageTs, value);
+    });
+  }
 
-  // Navigate into a subdirectory
-  app.action(/^cwd_pick_nav_/, async ({ action, body, ack }) => {
-    await ack();
-    if (action.type !== "button" || !("value" in action)) return;
-    if (body.type !== "block_actions") return;
-    const messageTs = body.message?.ts;
-    if (!messageTs) return;
-    await handleCwdNav(messageTs, action.value!);
-  });
+  /* ── CWD picker ──────────────────────────────────────────────────── */
+  onButtonAction("cwd_pick_select", handleCwdSelect);
+  onButtonAction(/^cwd_pick_nav_/, handleCwdNav);
+  onButtonAction("cwd_pick_parent", handleCwdNav);
+  onButtonAction(/^cwd_pick_pin_/, handleCwdNav);
+  onButtonAction("cwd_pick_cancel", (ts) => handleCwdCancel(ts), { noValue: true });
 
-  // Navigate to parent directory
-  app.action("cwd_pick_parent", async ({ action, body, ack }) => {
-    await ack();
-    if (action.type !== "button" || !("value" in action)) return;
-    if (body.type !== "block_actions") return;
-    const messageTs = body.message?.ts;
-    if (!messageTs) return;
-    await handleCwdNav(messageTs, action.value!);
-  });
+  /* ── File picker ─────────────────────────────────────────────────── */
+  onButtonAction(/^file_pick_select_/, handleFileSelect);
+  onButtonAction(/^file_pick_nav_/, handleFileNav);
+  onButtonAction("file_pick_nav_parent", handleFileNav);
+  onButtonAction("file_pick_cancel", (ts) => handleFilePickCancel(ts), { noValue: true });
 
-  // Jump to a pinned project
-  app.action(/^cwd_pick_pin_/, async ({ action, body, ack }) => {
-    await ack();
-    if (action.type !== "button" || !("value" in action)) return;
-    if (body.type !== "block_actions") return;
-    const messageTs = body.message?.ts;
-    if (!messageTs) return;
-    await handleCwdNav(messageTs, action.value!);
-  });
+  /* ── Ralph preset picker ─────────────────────────────────────────── */
+  onButtonAction(/^ralph_preset_/, handleRalphPresetSelect);
 
-  // Cancel the cwd picker
-  app.action("cwd_pick_cancel", async ({ action, body, ack }) => {
-    await ack();
-    if (body.type !== "block_actions") return;
-    const messageTs = body.message?.ts;
-    if (!messageTs) return;
-    await handleCwdCancel(messageTs);
-  });
+  /* ── Prompt template picker ──────────────────────────────────────── */
+  onButtonAction(/^prompt_pick_/, handlePromptSelect);
 
-  /* ── File picker action handlers ─────────────────────────────────── */
-
-  // File selected
-  app.action(/^file_pick_select_/, async ({ action, body, ack }) => {
-    await ack();
-    if (action.type !== "button" || !("value" in action)) return;
-    if (body.type !== "block_actions") return;
-    const messageTs = body.message?.ts;
-    if (!messageTs) return;
-    await handleFileSelect(messageTs, action.value!);
-  });
-
-  // Navigate into a directory
-  app.action(/^file_pick_nav_/, async ({ action, body, ack }) => {
-    await ack();
-    if (action.type !== "button" || !("value" in action)) return;
-    if (body.type !== "block_actions") return;
-    const messageTs = body.message?.ts;
-    if (!messageTs) return;
-    await handleFileNav(messageTs, action.value!);
-  });
-
-  // Navigate to parent directory
-  app.action("file_pick_nav_parent", async ({ action, body, ack }) => {
-    await ack();
-    if (action.type !== "button" || !("value" in action)) return;
-    if (body.type !== "block_actions") return;
-    const messageTs = body.message?.ts;
-    if (!messageTs) return;
-    await handleFileNav(messageTs, action.value!);
-  });
-
-  // Cancel file picker
-  app.action("file_pick_cancel", async ({ action, body, ack }) => {
-    await ack();
-    if (body.type !== "block_actions") return;
-    const messageTs = body.message?.ts;
-    if (!messageTs) return;
-    await handleFilePickCancel(messageTs);
-  });
-
-  /* ── Ralph preset picker action handlers ─────────────────────────── */
-
-  app.action(/^ralph_preset_/, async ({ action, body, ack }) => {
-    await ack();
-    if (action.type !== "button" || !("value" in action)) return;
-    if (body.type !== "block_actions") return;
-    const messageTs = body.message?.ts;
-    if (!messageTs) return;
-    await handleRalphPresetSelect(messageTs, action.value!);
-  });
-
-  /* ── Prompt template picker action handlers ──────────────────────── */
-
-  app.action(/^prompt_pick_/, async ({ action, body, ack }) => {
-    await ack();
-    if (action.type !== "button" || !("value" in action)) return;
-    if (body.type !== "block_actions") return;
-    const messageTs = body.message?.ts;
-    if (!messageTs) return;
-    await handlePromptSelect(messageTs, action.value!);
-  });
-
-  /* ── Session resume picker action handlers ──────────────────────── */
-
-  app.action(/^resume_project_/, async ({ action, body, ack }) => {
-    await ack();
-    if (action.type !== "button" || !("value" in action)) return;
-    if (body.type !== "block_actions") return;
-    const messageTs = body.message?.ts;
-    if (!messageTs) return;
-    await handleResumeProjectSelect(messageTs, action.value!);
-  });
-
-  app.action(/^resume_session_/, async ({ action, body, ack }) => {
-    await ack();
-    if (action.type !== "button" || !("value" in action)) return;
-    if (body.type !== "block_actions") return;
-    const messageTs = body.message?.ts;
-    if (!messageTs) return;
-    await handleResumeSessionSelect(messageTs, action.value!);
-  });
+  /* ── Session resume picker ──────────────────────────────────────── */
+  onButtonAction(/^resume_project_/, handleResumeProjectSelect);
+  onButtonAction(/^resume_session_/, handleResumeSessionSelect);
 
   return {
     app,

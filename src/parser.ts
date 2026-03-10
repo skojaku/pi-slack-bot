@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, readdirSync, statSync } from "fs";
-import { homedir } from "os";
 import { resolve, basename, join } from "path";
+import { expandHome } from "./paths.js";
 
 export interface Project {
   path: string;
@@ -94,15 +94,4 @@ function globMatch(pattern: string, text: string): boolean {
     "i",
   );
   return regex.test(text);
-}
-
-/** @deprecated Use loadProjects() instead. Kept for backward compatibility / tests. */
-export function scanProjects(workspaceDirs: string[]): string[] {
-  return scanDirectories(workspaceDirs.map(expandHome));
-}
-
-function expandHome(p: string): string {
-  if (p === "~") return homedir();
-  if (p.startsWith("~/")) return resolve(homedir(), p.slice(2));
-  return p;
 }
