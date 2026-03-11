@@ -45,15 +45,15 @@ describe("markdownToMrkdwn", () => {
 });
 
 describe("convertMarkdownTables", () => {
-  it("converts a standard markdown table to a code block", () => {
+  it("converts a 2-column table to bullet list", () => {
     const md = "| Name | Age |\n|------|-----|\n| Alice | 30 |\n| Bob | 25 |";
     const result = convertMarkdownTables(md);
-    assert.ok(result.includes("```"), "should wrap in code block");
     assert.ok(result.includes("Alice"), "should contain data");
+    assert.ok(result.includes("— 30"), "should have dash-separated value");
     assert.ok(result.includes("Bob"), "should contain data");
-    assert.ok(result.includes("─"), "should contain separator line");
-    // Should NOT contain pipe characters
+    assert.ok(result.includes("— 25"), "should have dash-separated value");
     assert.ok(!result.includes("|"), "should remove pipe characters");
+    assert.ok(!result.includes("```"), "should not use code block");
   });
 
   it("preserves tables inside code blocks", () => {
@@ -74,24 +74,25 @@ describe("convertMarkdownTables", () => {
     const result = convertMarkdownTables(md);
     assert.ok(result.startsWith("Before"), "text before preserved");
     assert.ok(result.endsWith("After"), "text after preserved");
-    assert.ok(result.includes("```"), "table converted to code block");
+    assert.ok(result.includes("— b"), "table converted to list");
   });
 
-  it("aligns columns with padding", () => {
-    const md = "| Short | LongerHeader |\n|---|---|\n| x | y |";
+  it("converts multi-column table to vertical blocks", () => {
+    const md = "| Name | Priority | Effort |\n|---|---|---|\n| Rate limits | High | Medium |\n| Logging | Low | Small |";
     const result = convertMarkdownTables(md);
-    // Header should be padded to match widths
-    const lines = result.split("\n");
-    const headerLine = lines.find((l) => l.includes("Short"));
-    assert.ok(headerLine, "should have header");
-    assert.ok(headerLine!.includes("LongerHeader"), "should have second header");
+    assert.ok(result.includes("Rate limits"), "should have title");
+    assert.ok(result.includes("Priority: High"), "should have key-value");
+    assert.ok(result.includes("Effort: Medium"), "should have key-value");
+    assert.ok(result.includes("Logging"), "should have second row title");
   });
 
-  it("integrates with markdownToMrkdwn", () => {
+  it("integrates with markdownToMrkdwn (bold placeholders resolved)", () => {
     const md = "# Review\n\n| Finding | Severity |\n|---|---|\n| Bug | High |\n| Typo | Low |";
     const result = markdownToMrkdwn(md);
-    assert.ok(result.includes("```"), "table should be in code block");
+    assert.ok(result.includes("*Bug*"), `should have bold title, got: ${result}`);
+    assert.ok(result.includes("— High"), "should have value");
     assert.ok(!result.includes("---|"), "separator row should be removed");
+    assert.ok(!result.includes("\uE000"), "no placeholders should remain");
   });
 });
 

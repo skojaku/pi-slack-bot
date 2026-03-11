@@ -11,8 +11,14 @@ export function markdownToMrkdwn(markdown: string, partial?: boolean): string {
     const fenceCount = (md.match(/```/g) ?? []).length;
     if (fenceCount % 2 !== 0) md += "\n```";
   }
+  // Convert tables before slackify since they contain pipes that slackify
+  // doesn't understand, but use a placeholder for bold that won't be mangled.
+  // We use Unicode private use area characters as delimiters.
   md = convertMarkdownTables(md);
-  return slackifyMarkdown(md);
+  md = slackifyMarkdown(md);
+  // Restore bold placeholders after slackify is done
+  md = md.replace(/\uE000/g, "*");
+  return md;
 }
 
 /**
@@ -35,7 +41,7 @@ export function convertMarkdownTables(markdown: string): string {
       /^\|[\s:|-]+\|$/.test(l.trim())
     );
     if (hasSeparator && tableBuffer.length >= 3) {
-      // Remove the separator row and reformat as aligned text in a code block
+      // Remove the separator row and parse cells
       const dataRows = tableBuffer.filter(
         (l) => !/^\|[\s:|-]+\|$/.test(l.trim())
       );
@@ -45,25 +51,30 @@ export function convertMarkdownTables(markdown: string): string {
           .slice(1, -1)
           .map((cell) => cell.trim())
       );
-      // Calculate column widths
-      const colCount = Math.max(...parsed.map((r) => r.length));
-      const widths: number[] = [];
-      for (let c = 0; c < colCount; c++) {
-        widths.push(Math.max(...parsed.map((r) => (r[c] ?? "").length)));
+      // First row is the header (column names)
+      const headers = parsed[0] ?? [];
+      // Use \uE000 (Unicode Private Use Area) as placeholder for Slack bold (*)
+      // to prevent slackify-markdown from mangling it as markdown emphasis.
+      const B = "\uE000";
+      // Render each data row as a vertical list block
+      for (let i = 1; i < parsed.length; i++) {
+        const row = parsed[i];
+        // Use the first cell as the block title
+        const title = row[0] ?? "";
+        if (headers.length <= 2) {
+          // Simple 2-column table: "• *header*: value"
+          result.push(`• ${B}${title}${B}${row[1] ? ` — ${row[1]}` : ""}`);
+        } else {
+          // Multi-column: title line + indented key-value pairs
+          result.push(`${B}${title}${B}`);
+          for (let c = 1; c < headers.length; c++) {
+            const val = row[c] ?? "";
+            if (val) {
+              result.push(`  • ${headers[c]}: ${val}`);
+            }
+          }
+        }
       }
-      // Format rows with padding
-      const formatted = parsed.map((row) =>
-        row.map((cell, c) => cell.padEnd(widths[c] ?? 0)).join("  ")
-      );
-      // Add a separator after header
-      const sep = widths.map((w) => "─".repeat(w)).join("──");
-      result.push("```");
-      result.push(formatted[0]);
-      result.push(sep);
-      for (let i = 1; i < formatted.length; i++) {
-        result.push(formatted[i]);
-      }
-      result.push("```");
     } else {
       // Not a real table, pass through as-is
       result.push(...tableBuffer);
