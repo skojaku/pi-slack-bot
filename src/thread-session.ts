@@ -25,6 +25,7 @@ export interface ThreadSessionCreateParams {
 export class ThreadSession {
   readonly threadTs: string;
   readonly channelId: string;
+  readonly sessionPath: string;
   cwd: string;
   lastActivity: Date;
 
@@ -39,6 +40,7 @@ export class ThreadSession {
     threadTs: string,
     channelId: string,
     cwd: string,
+    sessionPath: string,
     client: WebClient,
     agentSession: AgentSession,
     resourceLoader: DefaultResourceLoader,
@@ -47,6 +49,7 @@ export class ThreadSession {
     this.threadTs = threadTs;
     this.channelId = channelId;
     this.cwd = cwd;
+    this.sessionPath = sessionPath;
     this._client = client;
     this._agentSession = agentSession;
     this._resourceLoader = resourceLoader;
@@ -200,6 +203,7 @@ export class ThreadSession {
       params.threadTs,
       params.channelId,
       params.cwd,
+      sessionFilePath,
       params.client,
       session,
       resourceLoader,

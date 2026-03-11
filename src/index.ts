@@ -27,9 +27,18 @@ const slackApp = createApp(config);
 await slackApp.app.start();
 console.log("Bot running");
 
+// Restore sessions from the on-disk registry (non-blocking — failures are logged)
+slackApp.sessionManager.restoreAll().then((count) => {
+  if (count > 0) console.log(`Restored ${count} session(s) from previous run.`);
+}).catch((err) => {
+  console.error("Failed to restore sessions:", err);
+});
+
 process.on("SIGINT", async () => {
   console.log("\nShutting down...");
   await slackApp.sessionManager.disposeAll();
+  await slackApp.sessionManager.flushRegistry();
+  slackApp.sessionManager.disposeRegistry();
   await slackApp.app.stop();
   process.exit(0);
 });
