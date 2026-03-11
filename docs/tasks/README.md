@@ -5,7 +5,6 @@ Task specs for pi-slack-bot improvements, organized by priority.
 ## 🔴 High Priority
 | # | Task | File |
 |---|------|------|
-| 01 | Multi-user support | [01-multi-user-support.md](01-multi-user-support.md) |
 | 02 | Session resilience (auto-restore) | [02-session-resilience.md](02-session-resilience.md) |
 | 03 | Graceful Slack rate limit handling | [03-rate-limit-handling.md](03-rate-limit-handling.md) |
 
