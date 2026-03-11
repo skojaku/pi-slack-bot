@@ -14,6 +14,8 @@ function makeMockAgentSession() {
     messages: [],
     model: undefined,
     thinkingLevel: "off" as const,
+    getContextUsage: vi.fn(() => undefined),
+    compact: vi.fn(async () => ({ summary: "", firstKeptEntryId: "1", tokensBefore: 0 })),
   };
 }
 

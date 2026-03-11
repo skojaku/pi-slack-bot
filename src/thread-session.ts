@@ -1,7 +1,7 @@
 import path from "path";
 import { mkdirSync, realpathSync } from "fs";
 import { createAgentSession, createCodingTools, DefaultResourceLoader, SessionManager as PiSessionManager } from "@mariozechner/pi-coding-agent";
-import type { AgentSession, AgentSessionEvent, AgentSessionEventListener, PromptTemplate } from "@mariozechner/pi-coding-agent";
+import type { AgentSession, AgentSessionEventListener, CompactionResult, ContextUsage, PromptTemplate } from "@mariozechner/pi-coding-agent";
 import type { WebClient } from "@slack/web-api";
 import type { Config, ThinkingLevel } from "./config.js";
 import { StreamingUpdater } from "./streaming-updater.js";
@@ -12,6 +12,7 @@ import { hasFileModifications, postDiffReview, getHeadRef } from "./diff-reviewe
 import { createPasteProvider, type PasteProvider } from "./paste-provider.js";
 import { createNoopUiContext } from "./noop-ui-context.js";
 import { isRalphNotification, isRalphEndNotification } from "./ralph-notifications.js";
+import { formatTokenCount, formatContextUsage, getContextWarningThreshold } from "./context-format.js";
 import type { ToolCallRecord } from "./formatter.js";
 
 export interface ThreadSessionCreateParams {
@@ -93,6 +94,12 @@ export class ThreadSession {
    * The persistent subscriber skips streaming to Slack but still resolves turn promises.
    */
   private _ralphBackgroundActive = false;
+
+  /**
+   * Tracks the highest context warning threshold we've already warned about.
+   * Reset to 0 on newSession(). Prevents repeated warnings at the same level.
+   */
+  private _lastContextWarningThreshold = 0;
 
   static async create(params: ThreadSessionCreateParams): Promise<ThreadSession> {
     // Resolve symlinks so the cwd matches what pi TUI uses (realpath).
@@ -275,15 +282,43 @@ export class ThreadSession {
                 console.error(`[ThreadSession ${this.threadTs}] Failed to post diff review:`, err);
               }
             }
+            // Check context usage and warn if approaching limits
+            this._checkContextWarning();
           }).catch((err) => {
             console.error(`[ThreadSession ${this.threadTs}] Failed to finalize streaming:`, err);
           });
+        } else {
+          // No streaming state (e.g. ralph background) — still check context
+          this._checkContextWarning();
         }
         // Resolve the turn-complete promise so prompt() can return
         if (this._turnCompleteResolve) {
           this._turnCompleteResolve();
           this._turnCompleteResolve = null;
           this._turnCompletePromise = null;
+        }
+        return;
+      }
+
+      // Auto-compaction events
+      if (event.type === "auto_compaction_start") {
+        this._postToThread("🗜️ Auto-compacting conversation...").catch((err) => {
+          console.error(`[ThreadSession ${this.threadTs}] Failed to post auto-compaction start:`, err);
+        });
+        return;
+      }
+
+      if (event.type === "auto_compaction_end") {
+        const result = (event as any).result as CompactionResult | undefined;
+        if (result) {
+          const after = this.getContextUsage();
+          const beforeStr = formatTokenCount(result.tokensBefore);
+          const afterStr = after?.tokens != null ? formatTokenCount(after.tokens) : "unknown";
+          this._postToThread(`🗜️ Auto-compacted: ${beforeStr} → ${afterStr} tokens`).catch((err) => {
+            console.error(`[ThreadSession ${this.threadTs}] Failed to post auto-compaction end:`, err);
+          });
+          // Reset warning threshold since context was freed
+          this._lastContextWarningThreshold = 0;
         }
         return;
       }
@@ -438,6 +473,7 @@ export class ThreadSession {
 
   async newSession(): Promise<void> {
     await this._agentSession.newSession();
+    this._lastContextWarningThreshold = 0;
   }
 
   async reload(): Promise<void> {
@@ -453,6 +489,36 @@ export class ThreadSession {
 
   get messageCount(): number {
     return this._agentSession.messages.length;
+  }
+
+  /** Get current context window usage (tokens, window size, percentage). */
+  getContextUsage(): ContextUsage | undefined {
+    return this._agentSession.getContextUsage();
+  }
+
+  /** Compact the conversation to free context space. Returns the compaction result. */
+  async compact(customInstructions?: string): Promise<CompactionResult> {
+    return this._agentSession.compact(customInstructions);
+  }
+
+  /**
+   * Check context usage after a turn and post a warning if thresholds are crossed.
+   * Only warns once per threshold (80%, 90%) to avoid spam.
+   */
+  private _checkContextWarning(): void {
+    const usage = this.getContextUsage();
+    if (!usage || usage.percent === null) return;
+
+    const threshold = getContextWarningThreshold(usage.percent, this._lastContextWarningThreshold);
+    if (threshold !== null) {
+      this._lastContextWarningThreshold = threshold;
+      const usageStr = formatContextUsage(usage);
+      this._postToThread(
+        `⚠️ Context is ${Math.round(usage.percent)}% full (${usageStr}). Use \`!compact\` to summarize or \`!new\` for a fresh session.`,
+      ).catch((err) => {
+        console.error(`[ThreadSession ${this.threadTs}] Failed to post context warning:`, err);
+      });
+    }
   }
 
   get model(): AgentSession["model"] {

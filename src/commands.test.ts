@@ -88,6 +88,8 @@ function makeSession(overrides: Record<string, any> = {}) {
     setThinkingLevel: vi.fn(),
     enqueue: vi.fn((fn: () => Promise<void>) => fn()),
     prompt: vi.fn(async () => {}),
+    getContextUsage: vi.fn(() => undefined),
+    compact: vi.fn(async () => ({ summary: "compacted", firstKeptEntryId: "1", tokensBefore: 180000 })),
     ...overrides,
   } as any;
 }
@@ -366,5 +368,121 @@ describe("unknown command", () => {
     const result = await dispatchCommand("foobar", "", ctx);
     assert.equal(result, false);
     assert.ok(getPosted(ctx)[0].includes("No active session"));
+  });
+});
+
+// ── Context management commands ──────────────────────────────────
+
+describe("!status with context", () => {
+  it("includes context usage when available", async () => {
+    const session = makeSession({
+      getContextUsage: vi.fn(() => ({ tokens: 45200, contextWindow: 200000, percent: 23 })),
+    });
+    const ctx = makeCtx({ session });
+    await dispatchCommand("status", "", ctx);
+    const msg = getPosted(ctx)[0];
+    assert.ok(msg.includes("Context:"), "should include context label");
+    assert.ok(msg.includes("45K"), "should include formatted token count");
+    assert.ok(msg.includes("200K"), "should include window size");
+    assert.ok(msg.includes("23%"), "should include percentage");
+  });
+
+  it("omits context line when usage is undefined", async () => {
+    const session = makeSession({
+      getContextUsage: vi.fn(() => undefined),
+    });
+    const ctx = makeCtx({ session });
+    await dispatchCommand("status", "", ctx);
+    const msg = getPosted(ctx)[0];
+    assert.ok(!msg.includes("Context:"), "should not include context when undefined");
+  });
+});
+
+describe("!compact", () => {
+  it("compacts and reports before/after tokens", async () => {
+    const session = makeSession({
+      getContextUsage: vi.fn(() => ({ tokens: 45000, contextWindow: 200000, percent: 23 })),
+      compact: vi.fn(async () => ({
+        summary: "compacted",
+        firstKeptEntryId: "1",
+        tokensBefore: 180000,
+      })),
+    });
+    const ctx = makeCtx({ session });
+    await dispatchCommand("compact", "", ctx);
+    const msgs = getPosted(ctx);
+    assert.equal(msgs.length, 2);
+    assert.ok(msgs[0].includes("Compacting"), "first message should say compacting");
+    assert.ok(msgs[1].includes("180K"), "should include before tokens");
+    assert.ok(msgs[1].includes("45K"), "should include after tokens");
+  });
+
+  it("rejects when streaming", async () => {
+    const session = makeSession({ isStreaming: true });
+    const ctx = makeCtx({ session });
+    await dispatchCommand("compact", "", ctx);
+    const msgs = getPosted(ctx);
+    assert.equal(msgs.length, 1);
+    assert.ok(msgs[0].includes("Can't compact while streaming"));
+  });
+
+  it("replies no active session when none exists", async () => {
+    const ctx = makeCtx();
+    await dispatchCommand("compact", "", ctx);
+    assert.ok(getPosted(ctx)[0].includes("No active session"));
+  });
+
+  it("handles compact failure", async () => {
+    const session = makeSession({
+      compact: vi.fn(async () => { throw new Error("compaction failed"); }),
+    });
+    const ctx = makeCtx({ session });
+    await dispatchCommand("compact", "", ctx);
+    const msgs = getPosted(ctx);
+    assert.ok(msgs[1].includes("Compaction failed"));
+    assert.ok(msgs[1].includes("compaction failed"));
+  });
+});
+
+describe("!context", () => {
+  it("shows detailed context info", async () => {
+    const session = makeSession({
+      getContextUsage: vi.fn(() => ({ tokens: 100000, contextWindow: 200000, percent: 50 })),
+    });
+    const ctx = makeCtx({ session });
+    await dispatchCommand("context", "", ctx);
+    const msg = getPosted(ctx)[0];
+    assert.ok(msg.includes("Context Window"), "should include header");
+    assert.ok(msg.includes("█"), "should include bar");
+    assert.ok(msg.includes("░"), "should include empty bar");
+    assert.ok(msg.includes("50%"), "should include percentage");
+    assert.ok(msg.includes("100K"), "should include token count");
+    assert.ok(msg.includes("200K"), "should include window size");
+    assert.ok(msg.includes("!compact"), "should mention compact command");
+  });
+
+  it("handles no usage available", async () => {
+    const session = makeSession({
+      getContextUsage: vi.fn(() => undefined),
+    });
+    const ctx = makeCtx({ session });
+    await dispatchCommand("context", "", ctx);
+    assert.ok(getPosted(ctx)[0].includes("not available"));
+  });
+
+  it("replies no active session when none exists", async () => {
+    const ctx = makeCtx();
+    await dispatchCommand("context", "", ctx);
+    assert.ok(getPosted(ctx)[0].includes("No active session"));
+  });
+});
+
+describe("!help includes new commands", () => {
+  it("lists compact and context commands", async () => {
+    const ctx = makeCtx();
+    await dispatchCommand("help", "", ctx);
+    const msg = getPosted(ctx)[0];
+    assert.ok(msg.includes("!compact"), "should include !compact");
+    assert.ok(msg.includes("!context"), "should include !context");
   });
 });

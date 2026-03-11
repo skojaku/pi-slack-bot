@@ -7,6 +7,7 @@ import type { ThinkingLevel } from "./config.js";
 import { postRalphPicker, postPromptPicker } from "./command-picker.js";
 import { postProjectSessionPicker, postToTuiCommand } from "./session-picker.js";
 import { postDiffReview } from "./diff-reviewer.js";
+import { formatTokenCount, formatContextUsage, formatContextBar } from "./context-format.js";
 
 const VALID_THINKING_LEVELS: ThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh"];
 
@@ -42,6 +43,8 @@ const handlers: Record<string, CommandHandler> = {
       "`!cwd <path>` — Change working directory",
       "`!reload` — Reload extensions and prompt templates",
       "`!diff` — Show git diff of uncommitted changes",
+      "`!compact` — Compact conversation to free context space",
+      "`!context` — Show context window usage",
       "`!restart` — Restart the bot process (sessions auto-restore)",
       "`!resume` — Browse and resume a local pi TUI session",
       "`!to-tui` — Get a command to open this Slack session in your terminal",
@@ -94,6 +97,10 @@ const handlers: Record<string, CommandHandler> = {
       `*CWD:* \`${s.cwd}\``,
       `*Last activity:* ${s.lastActivity.toISOString()}`,
     ];
+    const usage = s.getContextUsage();
+    if (usage) {
+      lines.push(`*Context:* ${formatContextUsage(usage)}`);
+    }
     await reply(ctx, lines.join("\n"));
   },
 
@@ -235,6 +242,48 @@ const handlers: Record<string, CommandHandler> = {
     if (!posted) {
       await reply(ctx, "No uncommitted changes found (or not a git repo).");
     }
+  },
+
+  async compact(ctx) {
+    if (!ctx.session) {
+      await reply(ctx, "No active session.");
+      return;
+    }
+    if (ctx.session.isStreaming) {
+      await reply(ctx, "❌ Can't compact while streaming. Wait for the current turn to finish.");
+      return;
+    }
+    await reply(ctx, "🗜️ Compacting conversation...");
+    try {
+      const result = await ctx.session.compact();
+      const afterUsage = ctx.session.getContextUsage();
+      const beforeStr = formatTokenCount(result.tokensBefore);
+      const afterStr = afterUsage?.tokens != null ? formatTokenCount(afterUsage.tokens) : "unknown";
+      await reply(ctx, `🗜️ Compacted: ${beforeStr} → ${afterStr} tokens`);
+    } catch (err) {
+      await reply(ctx, `❌ Compaction failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  },
+
+  async context(ctx) {
+    if (!ctx.session) {
+      await reply(ctx, "No active session.");
+      return;
+    }
+    const usage = ctx.session.getContextUsage();
+    if (!usage) {
+      await reply(ctx, "Context usage not available yet.");
+      return;
+    }
+    const lines = [
+      "*Context Window*",
+      `\`${formatContextBar(usage.percent ?? 0)}\``,
+      `*Tokens:* ${formatContextUsage(usage)}`,
+      `*Model:* ${ctx.session.model?.id ?? "unknown"}`,
+      "",
+      "Use `!compact` to free space or `!new` for a fresh session.",
+    ];
+    await reply(ctx, lines.join("\n"));
   },
 
   async prompt(ctx, args) {
