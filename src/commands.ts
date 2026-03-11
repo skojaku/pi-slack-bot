@@ -42,6 +42,7 @@ const handlers: Record<string, CommandHandler> = {
       "`!cwd <path>` — Change working directory",
       "`!reload` — Reload extensions and prompt templates",
       "`!diff` — Show git diff of uncommitted changes",
+      "`!restart` — Restart the bot process (sessions auto-restore)",
       "`!resume` — Browse and resume a local pi TUI session",
       "`!to-tui` — Get a command to open this Slack session in your terminal",
       "`!ralph [preset] [prompt]` — Start a Ralph loop (shows preset picker if no args)",
@@ -176,6 +177,14 @@ const handlers: Record<string, CommandHandler> = {
     }
     await ctx.session.reload();
     await reply(ctx, "🔄 Extensions and prompt templates reloaded.");
+  },
+
+  async restart(ctx) {
+    await reply(ctx, "♻️ Restarting bot... sessions will auto-restore.");
+    // Flush registry so sessions survive the restart, then exit with
+    // code 75 which run.sh interprets as "restart requested".
+    await ctx.sessionManager.flushRegistry();
+    setTimeout(() => process.exit(75), 500);
   },
 
   async ralph(ctx, args) {

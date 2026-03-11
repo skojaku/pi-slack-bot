@@ -273,6 +273,36 @@ describe("!sessions", () => {
   });
 });
 
+describe("!restart", () => {
+  it("posts restart message and flushes registry", async () => {
+    const sessionManager = {
+      list: vi.fn(() => []),
+      flushRegistry: vi.fn(async () => {}),
+    } as any;
+    const ctx = makeCtx({ sessionManager });
+
+    // Mock process.exit to prevent actually exiting
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => {}) as any);
+    vi.useFakeTimers();
+
+    try {
+      await dispatchCommand("restart", "", ctx);
+
+      const msg = getPosted(ctx)[0];
+      assert.ok(msg.includes("Restarting"));
+      assert.equal(sessionManager.flushRegistry.mock.calls.length, 1);
+
+      // Advance timers to trigger the delayed process.exit
+      vi.advanceTimersByTime(600);
+      assert.equal(exitSpy.mock.calls.length, 1);
+      assert.equal(exitSpy.mock.calls[0][0], 75);
+    } finally {
+      exitSpy.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+});
+
 describe("!cwd", () => {
   let tmpDir: string;
 
