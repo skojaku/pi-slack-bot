@@ -7,7 +7,7 @@
  */
 import type { WebClient } from "@slack/web-api";
 import type { ThreadSession } from "./thread-session.js";
-import type { Pin } from "./thread-session.js";
+import type { Pin, PinStore } from "./pin-store.js";
 import { cancelSession, showDiff, compactSession } from "./session-actions.js";
 import { createLogger } from "./logger.js";
 
@@ -35,6 +35,7 @@ export async function handleReaction(
   channel: string,
   threadTs: string,
   messageTs: string,
+  pinStore?: PinStore,
 ): Promise<boolean> {
   const action = REACTION_MAP[emoji];
   if (!action) return false;
@@ -95,8 +96,10 @@ export async function handleReaction(
           timestamp: new Date().toISOString(),
           preview,
           permalink: permalinkResult.permalink ?? "",
+          channelId: channel,
+          threadTs,
         };
-        session.addPin(pin);
+        pinStore?.add(pin);
         await reply(`📌 Pinned: "${preview}"`);
       } catch (err) {
         await reply(`❌ Failed to pin: ${err instanceof Error ? err.message : String(err)}`);

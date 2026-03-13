@@ -2,7 +2,7 @@ import { resolve } from "path";
 import { existsSync, statSync } from "fs";
 import type { WebClient } from "@slack/web-api";
 import type { ThreadSession } from "./thread-session.js";
-import type { Pin } from "./thread-session.js";
+import type { Pin, PinStore } from "./pin-store.js";
 import type { BotSessionManager, ThreadSessionInfo } from "./session-manager.js";
 import type { ThinkingLevel } from "./config.js";
 import { postRalphPicker, postPromptPicker } from "./command-picker.js";
@@ -18,6 +18,7 @@ export interface CommandContext {
   client: WebClient;
   sessionManager: BotSessionManager;
   session: ThreadSession | undefined;
+  pinStore: PinStore;
 }
 
 type CommandHandler = (ctx: CommandContext, args: string) => Promise<void>;
@@ -271,10 +272,6 @@ const handlers: Record<string, CommandHandler> = {
   },
 
   async pin(ctx) {
-    if (!ctx.session) {
-      await reply(ctx, "No active session.");
-      return;
-    }
     try {
       // Get bot's own user ID
       const authResult = await ctx.client.auth.test();
@@ -304,8 +301,10 @@ const handlers: Record<string, CommandHandler> = {
         timestamp: new Date().toISOString(),
         preview,
         permalink: permalinkResult.permalink ?? "",
+        channelId: ctx.channel,
+        threadTs: ctx.threadTs,
       };
-      ctx.session.addPin(pin);
+      ctx.pinStore.add(pin);
       await reply(ctx, `📌 Pinned: "${preview}"`);
     } catch (err) {
       await reply(ctx, `❌ Failed to pin: ${err instanceof Error ? err.message : String(err)}`);
@@ -313,16 +312,12 @@ const handlers: Record<string, CommandHandler> = {
   },
 
   async pins(ctx) {
-    if (!ctx.session) {
-      await reply(ctx, "No active session.");
-      return;
-    }
-    const pins = ctx.session.pins;
+    const pins = ctx.pinStore.all;
     if (pins.length === 0) {
-      await reply(ctx, "No pinned messages in this session.");
+      await reply(ctx, "No pinned messages.");
       return;
     }
-    const lines = pins.map((p, i) =>
+    const lines = pins.map((p: Pin, i: number) =>
       `${i + 1}. ${p.preview}\n   <${p.permalink}|View message> — ${new Date(p.timestamp).toLocaleTimeString()}`
     );
     await reply(ctx, `*📌 Pinned messages (${pins.length}):*\n${lines.join("\n")}`);

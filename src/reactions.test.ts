@@ -1,6 +1,10 @@
 import { describe, it, vi } from "vitest";
 import assert from "node:assert/strict";
+import { mkdirSync } from "fs";
+import { join } from "path";
+import { tmpdir } from "os";
 import { handleReaction, REACTION_MAP } from "./reactions.js";
+import { PinStore } from "./pin-store.js";
 
 function makeClient(overrides: Record<string, any> = {}) {
   return {
@@ -21,8 +25,13 @@ function makeClient(overrides: Record<string, any> = {}) {
   } as any;
 }
 
+function makePinStore(): PinStore {
+  const dir = join(tmpdir(), `pin-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+  mkdirSync(dir, { recursive: true });
+  return new PinStore(dir);
+}
+
 function makeSession(overrides: Record<string, any> = {}) {
-  const _pins: any[] = [];
   return {
     cwd: "/workspace/project",
     isStreaming: false,
@@ -33,8 +42,6 @@ function makeSession(overrides: Record<string, any> = {}) {
     pasteProvider: { create: async () => null },
     getContextUsage: vi.fn(() => ({ tokens: 45000, contextWindow: 200000, percent: 23 })),
     compact: vi.fn(async () => ({ summary: "compacted", firstKeptEntryId: "1", tokensBefore: 180000 })),
-    pins: _pins,
-    addPin: vi.fn((pin: any) => _pins.push(pin)),
     ...overrides,
   } as any;
 }
@@ -157,13 +164,16 @@ describe("handleReaction", () => {
   it("pin: pins the reacted message and confirms", async () => {
     const client = makeClient();
     const session = makeSession();
-    const result = await handleReaction("pushpin", session, client, "C1", "ts1", "msg1");
+    const pinStore = makePinStore();
+    const result = await handleReaction("pushpin", session, client, "C1", "ts1", "msg1", pinStore);
     assert.equal(result, true);
-    assert.equal(session.addPin.mock.calls.length, 1);
-    const pin = session.addPin.mock.calls[0][0];
+    assert.equal(pinStore.all.length, 1);
+    const pin = pinStore.all[0];
     assert.equal(pin.preview, "Here is my response");
     assert.equal(pin.permalink, "https://slack.com/archives/C1/p123");
     assert.ok(pin.timestamp);
+    assert.equal(pin.channelId, "C1");
+    assert.equal(pin.threadTs, "ts1");
     assert.ok(getPosted(client)[0].includes("📌 Pinned"));
     assert.ok(getPosted(client)[0].includes("Here is my response"));
   });
@@ -178,8 +188,9 @@ describe("handleReaction", () => {
       },
     });
     const session = makeSession();
-    await handleReaction("pushpin", session, client, "C1", "ts1", "msg1");
-    const pin = session.addPin.mock.calls[0][0];
+    const pinStore = makePinStore();
+    await handleReaction("pushpin", session, client, "C1", "ts1", "msg1", pinStore);
+    const pin = pinStore.all[0];
     assert.equal(pin.preview.length, 151); // 150 chars + "…"
     assert.ok(pin.preview.endsWith("…"));
   });
@@ -191,9 +202,10 @@ describe("handleReaction", () => {
       },
     });
     const session = makeSession();
-    const result = await handleReaction("pushpin", session, client, "C1", "ts1", "msg_missing");
+    const pinStore = makePinStore();
+    const result = await handleReaction("pushpin", session, client, "C1", "ts1", "msg_missing", pinStore);
     assert.equal(result, true);
-    assert.equal(session.addPin.mock.calls.length, 0);
+    assert.equal(pinStore.all.length, 0);
     assert.ok(getPosted(client)[0].includes("Couldn't find"));
   });
 
@@ -204,9 +216,10 @@ describe("handleReaction", () => {
       },
     });
     const session = makeSession();
-    const result = await handleReaction("pushpin", session, client, "C1", "ts1", "msg1");
+    const pinStore = makePinStore();
+    const result = await handleReaction("pushpin", session, client, "C1", "ts1", "msg1", pinStore);
     assert.equal(result, true);
-    assert.equal(session.addPin.mock.calls.length, 0);
+    assert.equal(pinStore.all.length, 0);
     assert.ok(getPosted(client)[0].includes("Failed to pin"));
   });
 });

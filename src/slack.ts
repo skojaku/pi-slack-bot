@@ -25,6 +25,7 @@ import {
   type PendingCwdPick,
 } from "./cwd-picker.js";
 import { handleReaction, REACTION_MAP } from "./reactions.js";
+import { PinStore } from "./pin-store.js";
 
 export interface SlackApp {
   app: App;
@@ -39,6 +40,7 @@ export function createApp(config: Config): SlackApp {
   });
 
   const sessionManager = new BotSessionManager(config, app.client);
+  const pinStore = new PinStore(config.sessionDir);
   // loadProjects re-reads ~/.pi-slack-bot/projects.json on every call,
   // so edits take effect without restart.
   let projects = loadProjects(config.workspaceDirs);
@@ -114,6 +116,7 @@ export function createApp(config: Config): SlackApp {
         client,
         sessionManager,
         session,
+        pinStore,
       });
       return;
     }
@@ -200,7 +203,7 @@ export function createApp(config: Config): SlackApp {
     const session = sessionManager.get(threadTs);
     if (!session) return;
 
-    const handled = await handleReaction(emoji, session, client, channel, threadTs, messageTs);
+    const handled = await handleReaction(emoji, session, client, channel, threadTs, messageTs, pinStore);
     if (handled) {
       // Remove the reaction to indicate it was processed
       try {

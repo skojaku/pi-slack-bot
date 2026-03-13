@@ -1,6 +1,5 @@
 import path from "path";
-import fs from "fs/promises";
-import { mkdirSync, readFileSync, realpathSync } from "fs";
+import { mkdirSync, realpathSync } from "fs";
 import { createAgentSession, createCodingTools, DefaultResourceLoader, SessionManager as PiSessionManager } from "@mariozechner/pi-coding-agent";
 import type { AgentSession, AgentSessionEvent, AgentSessionEventListener, CompactionResult, ContextUsage, PromptTemplate } from "@mariozechner/pi-coding-agent";
 import type { ImageContent } from "@mariozechner/pi-ai";
@@ -19,15 +18,6 @@ import { createLogger } from "./logger.js";
 import type { ToolCallRecord } from "./formatter.js";
 
 const log = createLogger("thread-session");
-
-export interface Pin {
-  /** ISO timestamp of when the message was pinned. */
-  timestamp: string;
-  /** First 150 characters of the message (with "…" if truncated). */
-  preview: string;
-  /** Slack permalink to the pinned message. */
-  permalink: string;
-}
 
 export interface ThreadSessionCreateParams {
   threadTs: string;
@@ -52,7 +42,6 @@ export class ThreadSession {
   private _client: WebClient;
   private _updater: StreamingUpdater;
   private _pasteProvider: PasteProvider;
-  private _pins: Pin[] = [];
   private _tasks: Array<() => Promise<void>> = [];
   private _processing = false;
 
@@ -77,33 +66,6 @@ export class ThreadSession {
     this._updater = updater;
     this._pasteProvider = pasteProvider;
     this.lastActivity = new Date();
-
-    // Load persisted pins from disk
-    this._pins = ThreadSession._loadPins(sessionPath);
-  }
-
-  /** Path to the pins file for a given session path. */
-  private static _pinsPath(sessionPath: string): string {
-    return sessionPath + ".pins.json";
-  }
-
-  /** Load pins from the on-disk file. Returns [] on any error. */
-  private static _loadPins(sessionPath: string): Pin[] {
-    try {
-      const raw = readFileSync(ThreadSession._pinsPath(sessionPath), "utf-8");
-      const data = JSON.parse(raw);
-      if (Array.isArray(data)) return data;
-      return [];
-    } catch {
-      return [];
-    }
-  }
-
-  /** Persist the current pins to disk (async, best-effort). */
-  private _savePins(): void {
-    const pinsPath = ThreadSession._pinsPath(this.sessionPath);
-    fs.writeFile(pinsPath, JSON.stringify(this._pins, null, 2), "utf-8")
-      .catch((err) => log.error("Failed to save pins", { error: err, pinsPath }));
   }
 
   /**
@@ -614,16 +576,5 @@ export class ThreadSession {
   /** The last user prompt sent to the agent (for retry). */
   get lastUserPrompt(): string | null {
     return this._lastUserPrompt;
-  }
-
-  /** Add a pinned message to this session. Persists to disk. */
-  addPin(pin: Pin): void {
-    this._pins.push(pin);
-    this._savePins();
-  }
-
-  /** All pinned messages in this session. */
-  get pins(): ReadonlyArray<Pin> {
-    return this._pins;
   }
 }
