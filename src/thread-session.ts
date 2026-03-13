@@ -1,5 +1,6 @@
 import path from "path";
-import { mkdirSync, realpathSync } from "fs";
+import fs from "fs/promises";
+import { mkdirSync, readFileSync, realpathSync } from "fs";
 import { createAgentSession, createCodingTools, DefaultResourceLoader, SessionManager as PiSessionManager } from "@mariozechner/pi-coding-agent";
 import type { AgentSession, AgentSessionEvent, AgentSessionEventListener, CompactionResult, ContextUsage, PromptTemplate } from "@mariozechner/pi-coding-agent";
 import type { ImageContent } from "@mariozechner/pi-ai";
@@ -76,6 +77,33 @@ export class ThreadSession {
     this._updater = updater;
     this._pasteProvider = pasteProvider;
     this.lastActivity = new Date();
+
+    // Load persisted pins from disk
+    this._pins = ThreadSession._loadPins(sessionPath);
+  }
+
+  /** Path to the pins file for a given session path. */
+  private static _pinsPath(sessionPath: string): string {
+    return sessionPath + ".pins.json";
+  }
+
+  /** Load pins from the on-disk file. Returns [] on any error. */
+  private static _loadPins(sessionPath: string): Pin[] {
+    try {
+      const raw = readFileSync(ThreadSession._pinsPath(sessionPath), "utf-8");
+      const data = JSON.parse(raw);
+      if (Array.isArray(data)) return data;
+      return [];
+    } catch {
+      return [];
+    }
+  }
+
+  /** Persist the current pins to disk (async, best-effort). */
+  private _savePins(): void {
+    const pinsPath = ThreadSession._pinsPath(this.sessionPath);
+    fs.writeFile(pinsPath, JSON.stringify(this._pins, null, 2), "utf-8")
+      .catch((err) => log.error("Failed to save pins", { error: err, pinsPath }));
   }
 
   /**
@@ -588,9 +616,10 @@ export class ThreadSession {
     return this._lastUserPrompt;
   }
 
-  /** Add a pinned message to this session. */
+  /** Add a pinned message to this session. Persists to disk. */
   addPin(pin: Pin): void {
     this._pins.push(pin);
+    this._savePins();
   }
 
   /** All pinned messages in this session. */

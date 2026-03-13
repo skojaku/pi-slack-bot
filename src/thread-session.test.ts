@@ -1,6 +1,9 @@
-import { describe, it, vi } from "vitest";
+import { describe, it, vi, afterEach } from "vitest";
 import assert from "node:assert/strict";
-import { ThreadSession } from "./thread-session.js";
+import fs from "fs";
+import path from "path";
+import os from "os";
+import { ThreadSession, type Pin } from "./thread-session.js";
 
 // Minimal mock AgentSession
 function makeMockAgentSession() {
@@ -39,10 +42,10 @@ function makeMockUpdater() {
   };
 }
 
-function makeSession(agentSession = makeMockAgentSession(), updater = makeMockUpdater()) {
+function makeSession(agentSession = makeMockAgentSession(), updater = makeMockUpdater(), sessionPath = "/tmp/sessions/ts1.jsonl") {
   const client = { chat: { postMessage: vi.fn(async () => ({ ts: "1" })) } } as any;
   return {
-    session: new ThreadSession("ts1", "C1", "/tmp", "/tmp/sessions/ts1.jsonl", client, agentSession as any, {} as any, updater as any, { create: async () => null } as any),
+    session: new ThreadSession("ts1", "C1", "/tmp", sessionPath, client, agentSession as any, {} as any, updater as any, { create: async () => null } as any),
     client,
     agentSession,
     updater,
@@ -318,5 +321,100 @@ describe("ThreadSession prompt event wiring", () => {
     assert.strictEqual(updater.finalize.mock.calls.length, 0, "finalize should NOT be called for background ralph turns");
     // But the ralph background flag should be set
     assert.ok((session as any)._ralphBackgroundActive, "ralph background mode should be active");
+  });
+});
+
+// ── Pin persistence ─────────────────────────────────────────────────
+
+describe("Pin persistence", () => {
+  const tmpDir = os.tmpdir();
+  const cleanupPaths: string[] = [];
+
+  function tmpSessionPath(): string {
+    const p = path.join(tmpDir, `test-session-${Date.now()}-${Math.random().toString(36).slice(2)}.jsonl`);
+    cleanupPaths.push(p, p + ".pins.json");
+    return p;
+  }
+
+  afterEach(() => {
+    for (const p of cleanupPaths) {
+      try { fs.unlinkSync(p); } catch { /* ignore */ }
+    }
+    cleanupPaths.length = 0;
+  });
+
+  const samplePin: Pin = {
+    timestamp: "2026-03-13T00:00:00.000Z",
+    preview: "Hello world",
+    permalink: "https://slack.com/archives/C1/p123",
+  };
+
+  it("starts with no pins", () => {
+    const sessionPath = tmpSessionPath();
+    const { session } = makeSession(undefined, undefined, sessionPath);
+    assert.deepEqual(session.pins, []);
+  });
+
+  it("addPin persists to disk", async () => {
+    const sessionPath = tmpSessionPath();
+    const { session } = makeSession(undefined, undefined, sessionPath);
+
+    session.addPin(samplePin);
+    assert.deepEqual([...session.pins], [samplePin]);
+
+    // Wait for async write
+    await new Promise((r) => setTimeout(r, 50));
+
+    const pinsPath = sessionPath + ".pins.json";
+    assert.ok(fs.existsSync(pinsPath), "pins file should exist on disk");
+
+    const data = JSON.parse(fs.readFileSync(pinsPath, "utf-8"));
+    assert.deepEqual(data, [samplePin]);
+  });
+
+  it("loads pins from disk on construction", async () => {
+    const sessionPath = tmpSessionPath();
+    const pinsPath = sessionPath + ".pins.json";
+
+    // Write pins file before creating the session
+    fs.writeFileSync(pinsPath, JSON.stringify([samplePin]), "utf-8");
+
+    const { session } = makeSession(undefined, undefined, sessionPath);
+    assert.deepEqual([...session.pins], [samplePin]);
+  });
+
+  it("survives missing pins file gracefully", () => {
+    const sessionPath = tmpSessionPath();
+    // No pins file on disk
+    const { session } = makeSession(undefined, undefined, sessionPath);
+    assert.deepEqual(session.pins, []);
+  });
+
+  it("survives corrupt pins file gracefully", () => {
+    const sessionPath = tmpSessionPath();
+    const pinsPath = sessionPath + ".pins.json";
+    fs.writeFileSync(pinsPath, "not json", "utf-8");
+
+    const { session } = makeSession(undefined, undefined, sessionPath);
+    assert.deepEqual(session.pins, []);
+  });
+
+  it("accumulates multiple pins", async () => {
+    const sessionPath = tmpSessionPath();
+    const { session } = makeSession(undefined, undefined, sessionPath);
+
+    const pin2: Pin = { timestamp: "2026-03-13T01:00:00.000Z", preview: "Second", permalink: "https://slack.com/p2" };
+    session.addPin(samplePin);
+    session.addPin(pin2);
+
+    assert.equal(session.pins.length, 2);
+
+    // Wait for async writes
+    await new Promise((r) => setTimeout(r, 50));
+
+    const data = JSON.parse(fs.readFileSync(sessionPath + ".pins.json", "utf-8"));
+    assert.equal(data.length, 2);
+    assert.equal(data[0].preview, "Hello world");
+    assert.equal(data[1].preview, "Second");
   });
 });
