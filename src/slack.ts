@@ -9,6 +9,7 @@ import {
   handlePromptSelect,
   tryConsumeRalphPrompt,
 } from "./command-picker.js";
+import { handleModelSelect } from "./model-picker.js";
 import {
   handleResumeProjectSelect,
   handleResumeSessionSelect,
@@ -255,6 +256,9 @@ export function createApp(config: Config): SlackApp {
 
   /* ── Prompt template picker ──────────────────────────────────────── */
   onButtonAction(/^prompt_pick_/, handlePromptSelect);
+
+  /* ── Model picker ────────────────────────────────────────────────── */
+  onButtonAction(/^model_pick_/, handleModelSelect);
 
   /* ── Session resume picker ──────────────────────────────────────── */
   onButtonAction(/^resume_project_/, handleResumeProjectSelect);

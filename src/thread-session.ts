@@ -491,10 +491,13 @@ export class ThreadSession {
   }
 
   async reload(): Promise<void> {
-    // Re-discovers extensions and prompts from disk at the original cwd.
+    // Full reload: re-discovers packages, extensions, skills, and prompts from
+    // settings.json and disk. Uses AgentSession.reload() which tears down the
+    // old extension runner, re-creates it with newly discovered extensions,
+    // and emits session_shutdown → session_start lifecycle events.
     // Note: project-local .pi/ discovery is bound to the cwd set at session
     // creation. Use !new after !cwd to pick up a different project's .pi/.
-    await this._resourceLoader.reload();
+    await this._agentSession.reload();
   }
 
   get isStreaming(): boolean {
@@ -537,6 +540,10 @@ export class ThreadSession {
 
   get model(): AgentSession["model"] {
     return this._agentSession.model;
+  }
+
+  get modelRegistry(): AgentSession["modelRegistry"] {
+    return this._agentSession.modelRegistry;
   }
 
   get thinkingLevel(): ThinkingLevel {

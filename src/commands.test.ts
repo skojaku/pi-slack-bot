@@ -101,7 +101,7 @@ function makeSession(overrides: Record<string, any> = {}) {
     lastActivity: new Date("2026-03-04T00:00:00Z"),
     isStreaming: false,
     messageCount: 5,
-    model: { id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5" },
+    model: { id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5", provider: "anthropic" },
     thinkingLevel: "off",
     abort: vi.fn(),
     newSession: vi.fn(async () => {}),
@@ -111,6 +111,12 @@ function makeSession(overrides: Record<string, any> = {}) {
     prompt: vi.fn(async () => {}),
     getContextUsage: vi.fn(() => undefined),
     compact: vi.fn(async () => ({ summary: "compacted", firstKeptEntryId: "1", tokensBefore: 180000 })),
+    modelRegistry: {
+      getAvailable: () => [
+        { id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5", provider: "anthropic", reasoning: false, contextWindow: 200000 },
+        { id: "gpt-4o", name: "GPT-4o", provider: "openai", reasoning: false, contextWindow: 128000 },
+      ],
+    },
     ...overrides,
   } as any;
 }
@@ -203,12 +209,15 @@ describe("!model", () => {
     assert.ok(getPosted(ctx)[0].includes("gpt-4o"));
   });
 
-  it("shows current model when no args", async () => {
+  it("shows model picker when no args", async () => {
     const session = makeSession();
     const ctx = makeCtx({ session });
     await dispatchCommand("model", "", ctx);
     assert.equal(session.setModel.mock.calls.length, 0);
-    assert.ok(getPosted(ctx)[0].includes("claude-sonnet-4-5"));
+    // Should post a picker message with blocks (not just a text reply)
+    const posted = (ctx as any)._posted;
+    assert.ok(posted.length > 0);
+    assert.ok(posted[0].text.includes("Pick a model"));
   });
 
   it("reports error for unknown model", async () => {

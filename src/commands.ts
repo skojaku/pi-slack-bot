@@ -6,6 +6,7 @@ import type { Pin, PinStore } from "./pin-store.js";
 import type { BotSessionManager, ThreadSessionInfo } from "./session-manager.js";
 import type { ThinkingLevel } from "./config.js";
 import { postRalphPicker, postPromptPicker } from "./command-picker.js";
+import { postModelPicker } from "./model-picker.js";
 import { postProjectSessionPicker, postToTuiCommand } from "./session-picker.js";
 import { cancelSession, showDiff, compactSession } from "./session-actions.js";
 import { formatContextUsage, formatContextBar } from "./context-format.js";
@@ -114,7 +115,8 @@ const handlers: Record<string, CommandHandler> = {
     }
     const modelName = args.trim();
     if (!modelName) {
-      await reply(ctx, `Current model: ${ctx.session.model?.id ?? "unknown"}`);
+      // No args — show interactive model picker
+      await postModelPicker(ctx.client, ctx.channel, ctx.threadTs, ctx.session);
       return;
     }
     try {
