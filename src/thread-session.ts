@@ -16,6 +16,7 @@ import { createNoopUiContext } from "./noop-ui-context.js";
 import { formatTokenCount, formatContextUsage, getContextWarningThreshold } from "./context-format.js";
 import { createLogger } from "./logger.js";
 import type { ToolCallRecord } from "./formatter.js";
+import { isExpiredTokenError, refreshAwsCredentials } from "./aws-creds.js";
 
 const log = createLogger("thread-session");
 
@@ -79,6 +80,11 @@ export class ThreadSession {
    */
   private _activeStreamState: import("./streaming-updater.js").StreamingState | null = null;
   /**
+   * Promise for the in-flight begin() call. Allows agent_end to await it
+   * when the API fails so fast that begin() hasn't resolved yet.
+   */
+  private _beginPromise: Promise<import("./streaming-updater.js").StreamingState> | null = null;
+  /**
    * Tool records for the current agent turn, used to detect file modifications.
    */
   private _turnToolRecords: ToolCallRecord[] = [];
@@ -103,6 +109,12 @@ export class ThreadSession {
    * The last user prompt sent to the agent. Used for retry via reaction.
    */
   private _lastUserPrompt: string | null = null;
+
+  /**
+   * Set to true when credentials were auto-refreshed after an expired token error.
+   * The prompt() method checks this after the turn completes and retries once.
+   */
+  private _pendingCredRetry = false;
 
   static async create(params: ThreadSessionCreateParams): Promise<ThreadSession> {
     // Resolve symlinks so the cwd matches what pi TUI uses (realpath).
@@ -240,8 +252,12 @@ export class ThreadSession {
         this._turnToolRecords = [];
         this._turnBaseRef = getHeadRef(this.cwd);
 
-        // A new agent turn is starting — create streaming state
-        this._updater.begin(this.channelId, this.threadTs).then((state) => {
+        // A new agent turn is starting — create streaming state.
+        // Store the promise so agent_end can await it if the API fails
+        // before begin() resolves (race condition with fast errors).
+        const beginPromise = this._updater.begin(this.channelId, this.threadTs);
+        this._beginPromise = beginPromise;
+        beginPromise.then((state) => {
           this._activeStreamState = state;
           flushPending();
         }).catch((err) => {
@@ -251,42 +267,85 @@ export class ThreadSession {
       }
 
       if (event.type === "agent_end") {
-        // Agent turn finished — finalize the stream and resolve the turn promise
-        const state = this._activeStreamState;
+        // Agent turn finished — finalize the stream and resolve the turn promise.
+        // If begin() hasn't resolved yet (fast API error), await it first.
+        const doFinalize = async () => {
+          let state = this._activeStreamState;
+          if (!state && this._beginPromise) {
+            try {
+              state = await this._beginPromise;
+            } catch {
+              // begin() itself failed — nothing to finalize
+            }
+          }
+          this._activeStreamState = null;
+          this._beginPromise = null;
+          stateReady = false;
+          pendingEvents = [];
+
+          // Check if the agent turn ended with an API error (e.g. expired credentials).
+          // The last assistant message will have stopReason: "error" with an errorMessage.
+          const messages = "messages" in event ? event.messages : [];
+          const lastMsg = messages[messages.length - 1];
+          const apiError = lastMsg && "stopReason" in lastMsg && lastMsg.stopReason === "error"
+            ? ("errorMessage" in lastMsg ? (lastMsg.errorMessage as string) : "Unknown API error")
+            : null;
+
+          if (state) {
+            if (apiError && !state.rawMarkdown.trim() && isExpiredTokenError(apiError)) {
+              // Expired AWS credentials — try to auto-refresh and retry
+              log.info("Detected expired token, attempting credential refresh", { threadTs: this.threadTs });
+              await this._updater.finalize(state);
+              const refreshed = await refreshAwsCredentials();
+              if (refreshed && this._lastUserPrompt) {
+                await this._postToThread("🔄 Credentials refreshed, retrying...");
+                this._pendingCredRetry = true;
+              } else if (!refreshed) {
+                await this._postToThread("❌ AWS credentials expired and auto-refresh failed. Run: `ada credentials update --profile " + (process.env.AWS_PROFILE ?? "claude") + " --once`");
+              }
+            } else if (apiError && !state.rawMarkdown.trim()) {
+              // API failed before producing any content — show the error
+              await this._updater.error(state, new Error(apiError));
+            } else {
+              await this._updater.finalize(state);
+              // Auto-post diff if files were modified
+              if (hasFileModifications(toolRecords)) {
+                try {
+                  await postDiffReview(this._client, this.channelId, this.threadTs, this.cwd, {
+                    baseRef,
+                    toolRecords,
+                    pasteProvider: this._pasteProvider,
+                  });
+                } catch (err) {
+                  log.error("Failed to post diff review", { threadTs: this.threadTs, error: err });
+                }
+              }
+              // Check context usage and warn if approaching limits
+              this._checkContextWarning();
+            }
+          } else {
+            // No streaming state — still check context
+            this._checkContextWarning();
+          }
+          // Resolve the turn-complete promise so prompt() can return
+          if (this._turnCompleteResolve) {
+            this._turnCompleteResolve();
+            this._turnCompleteResolve = null;
+            this._turnCompletePromise = null;
+          }
+        };
+
         const toolRecords = [...this._turnToolRecords];
         const baseRef = this._turnBaseRef;
-        this._activeStreamState = null;
-        stateReady = false;
-        pendingEvents = [];
-        if (state) {
-          this._updater.finalize(state).then(async () => {
-            // Auto-post diff if files were modified
-            if (hasFileModifications(toolRecords)) {
-              try {
-                await postDiffReview(this._client, this.channelId, this.threadTs, this.cwd, {
-                  baseRef,
-                  toolRecords,
-                  pasteProvider: this._pasteProvider,
-                });
-              } catch (err) {
-                log.error("Failed to post diff review", { threadTs: this.threadTs, error: err });
-              }
-            }
-            // Check context usage and warn if approaching limits
-            this._checkContextWarning();
-          }).catch((err) => {
-            log.error("Failed to finalize streaming", { threadTs: this.threadTs, error: err });
-          });
-        } else {
-          // No streaming state — still check context
-          this._checkContextWarning();
-        }
-        // Resolve the turn-complete promise so prompt() can return
-        if (this._turnCompleteResolve) {
-          this._turnCompleteResolve();
-          this._turnCompleteResolve = null;
-          this._turnCompletePromise = null;
-        }
+        doFinalize().catch((err) => {
+          log.error("Failed to finalize streaming", { threadTs: this.threadTs, error: err });
+          // Still resolve the turn promise so prompt() doesn't hang
+          if (this._turnCompleteResolve) {
+            this._turnCompleteResolve();
+            this._turnCompleteResolve = null;
+            this._turnCompletePromise = null;
+          }
+        });
         return;
       }
 
@@ -400,10 +459,45 @@ export class ThreadSession {
         });
       }
     } catch (err) {
-      // If we have an active stream state, show the error there
-      const state = this._activeStreamState;
+      // If this is an expired token error, try to auto-refresh and retry
+      if (isExpiredTokenError(err) && !this._pendingCredRetry) {
+        log.info("Detected expired token in prompt catch, attempting credential refresh", { threadTs: this.threadTs });
+        // Clean up any active stream state
+        if (this._activeStreamState) {
+          await this._updater.finalize(this._activeStreamState);
+          this._activeStreamState = null;
+          this._beginPromise = null;
+        }
+        const refreshed = await refreshAwsCredentials();
+        if (refreshed && this._lastUserPrompt) {
+          await this._postToThread("🔄 Credentials refreshed, retrying...");
+          this._pendingCredRetry = true;
+          // Fall through to the retry check below
+          if (this._turnCompleteResolve) {
+            this._turnCompleteResolve();
+            this._turnCompleteResolve = null;
+            this._turnCompletePromise = null;
+          }
+          // Retry handled after the catch block
+          return this.prompt(this._lastUserPrompt, options).finally(() => {
+            this._pendingCredRetry = false;
+          });
+        }
+      }
+
+      // If we have an active stream state, show the error there.
+      // If begin() hasn't resolved yet (fast API error), await it first.
+      let state = this._activeStreamState;
+      if (!state && this._beginPromise) {
+        try {
+          state = await this._beginPromise;
+        } catch {
+          // begin() itself failed
+        }
+      }
       if (state) {
         this._activeStreamState = null;
+        this._beginPromise = null;
         await this._updater.error(state, err instanceof Error ? err : new Error(String(err)));
       }
       // Clean up turn promise
@@ -412,6 +506,13 @@ export class ThreadSession {
         this._turnCompleteResolve = null;
         this._turnCompletePromise = null;
       }
+    }
+
+    // If credentials were auto-refreshed during this turn, retry the prompt once.
+    if (this._pendingCredRetry && this._lastUserPrompt) {
+      this._pendingCredRetry = false;
+      log.info("Retrying prompt after credential refresh", { threadTs: this.threadTs });
+      return this.prompt(this._lastUserPrompt, options);
     }
   }
 
