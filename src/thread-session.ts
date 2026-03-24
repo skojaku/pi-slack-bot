@@ -116,6 +116,10 @@ export class ThreadSession {
    */
   private _pendingCredRetry = false;
 
+  /** Tracks consecutive credential refresh attempts to prevent infinite retry loops. */
+  private _credRetryCount = 0;
+  private static readonly MAX_CRED_RETRIES = 1;
+
   static async create(params: ThreadSessionCreateParams): Promise<ThreadSession> {
     // Resolve symlinks so the cwd matches what pi TUI uses (realpath).
     // Without this, ~/workplace/Rosie stays as /home/samfp/workplace/Rosie
@@ -293,15 +297,21 @@ export class ThreadSession {
 
           if (state) {
             if (apiError && !state.rawMarkdown.trim() && isExpiredTokenError(apiError)) {
-              // Expired AWS credentials — try to auto-refresh and retry
-              log.info("Detected expired token, attempting credential refresh", { threadTs: this.threadTs });
+              // Expired AWS credentials — try to auto-refresh and retry (once only)
+              log.info("Detected expired token, attempting credential refresh", { threadTs: this.threadTs, retryCount: this._credRetryCount });
               await this._updater.finalize(state);
-              const refreshed = await refreshAwsCredentials();
-              if (refreshed && this._lastUserPrompt) {
-                await this._postToThread("🔄 Credentials refreshed, retrying...");
-                this._pendingCredRetry = true;
-              } else if (!refreshed) {
-                await this._postToThread("❌ AWS credentials expired and auto-refresh failed. Run: `ada credentials update --profile " + (process.env.AWS_PROFILE ?? "claude") + " --once`");
+              if (this._credRetryCount >= ThreadSession.MAX_CRED_RETRIES) {
+                log.warn("Max credential retries reached, not retrying", { threadTs: this.threadTs });
+                await this._postToThread("❌ AWS credentials still expired after retry. Run: `ada credentials update --profile " + (process.env.AWS_PROFILE ?? "claude") + " --once`");
+              } else {
+                const refreshed = await refreshAwsCredentials();
+                if (refreshed && this._lastUserPrompt) {
+                  await this._postToThread("🔄 Credentials refreshed, retrying...");
+                  this._pendingCredRetry = true;
+                  this._credRetryCount++;
+                } else if (!refreshed) {
+                  await this._postToThread("❌ AWS credentials expired and auto-refresh failed. Run: `ada credentials update --profile " + (process.env.AWS_PROFILE ?? "claude") + " --once`");
+                }
               }
             } else if (apiError && !state.rawMarkdown.trim()) {
               // API failed before producing any content — show the error
@@ -415,6 +425,11 @@ export class ThreadSession {
   }
 
   async prompt(text: string, options?: { images?: ImageContent[] }): Promise<void> {
+    // Reset credential retry counter on fresh user messages (not retries)
+    if (!this._pendingCredRetry) {
+      this._credRetryCount = 0;
+    }
+
     // Track last user prompt for retry via reaction
     this._lastUserPrompt = text;
 
@@ -459,9 +474,9 @@ export class ThreadSession {
         });
       }
     } catch (err) {
-      // If this is an expired token error, try to auto-refresh and retry
-      if (isExpiredTokenError(err) && !this._pendingCredRetry) {
-        log.info("Detected expired token in prompt catch, attempting credential refresh", { threadTs: this.threadTs });
+      // If this is an expired token error, try to auto-refresh and retry (once only)
+      if (isExpiredTokenError(err) && !this._pendingCredRetry && this._credRetryCount < ThreadSession.MAX_CRED_RETRIES) {
+        log.info("Detected expired token in prompt catch, attempting credential refresh", { threadTs: this.threadTs, retryCount: this._credRetryCount });
         // Clean up any active stream state
         if (this._activeStreamState) {
           await this._updater.finalize(this._activeStreamState);
@@ -472,6 +487,7 @@ export class ThreadSession {
         if (refreshed && this._lastUserPrompt) {
           await this._postToThread("🔄 Credentials refreshed, retrying...");
           this._pendingCredRetry = true;
+          this._credRetryCount++;
           // Fall through to the retry check below
           if (this._turnCompleteResolve) {
             this._turnCompleteResolve();
