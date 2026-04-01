@@ -21,7 +21,7 @@ log.info("pi-slack-bot starting", {
   workspaceDirs: config.workspaceDirs,
 });
 
-const slackApp = await createApp(config);
+const slackApp = createApp(config);
 
 await slackApp.app.start();
 log.info("Bot running");
@@ -35,7 +35,7 @@ slackApp.sessionManager.restoreAll().then((count) => {
 
 process.on("SIGINT", async () => {
   log.info("Shutting down");
-  slackApp.listener?.dmPoller?.stop();
+  slackApp.sessionManager.stopReaper();
   await slackApp.sessionManager.disposeAll();
   await slackApp.sessionManager.flushRegistry();
   slackApp.sessionManager.disposeRegistry();

@@ -25,15 +25,12 @@ import {
 } from "./cwd-picker.js";
 import { handleReaction, REACTION_MAP } from "./reactions.js";
 import { PinStore } from "./pin-store.js";
-import { installListener, type Listener } from "./listener.js";
-
 export interface SlackApp {
   app: App;
   sessionManager: BotSessionManager;
-  listener?: Listener;
 }
 
-export async function createApp(config: Config): Promise<SlackApp> {
+export function createApp(config: Config): SlackApp {
   const app = new App({
     token: config.slackBotToken,
     appToken: config.slackAppToken,
@@ -42,9 +39,6 @@ export async function createApp(config: Config): Promise<SlackApp> {
 
   const sessionManager = new BotSessionManager(config, app.client);
   const pinStore = new PinStore(config.sessionDir);
-
-  // Install passive listener for background preparation
-  const listener = await installListener(app, config);
 
   // loadProjects re-reads ~/.pi-slack-bot/projects.json on every call,
   // so edits take effect without restart.
@@ -122,7 +116,6 @@ export async function createApp(config: Config): Promise<SlackApp> {
         sessionManager,
         session,
         pinStore,
-        briefingStore: listener.store,
       });
       return;
     }
@@ -262,6 +255,5 @@ export async function createApp(config: Config): Promise<SlackApp> {
   return {
     app,
     sessionManager,
-    listener,
   };
 }

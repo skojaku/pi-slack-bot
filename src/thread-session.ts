@@ -39,6 +39,7 @@ export class ThreadSession {
   lastActivity: Date;
 
   private _agentSession: AgentSession;
+  // @ts-expect-error stored for potential future use
   private _resourceLoader: DefaultResourceLoader;
   private _client: WebClient;
   private _updater: StreamingUpdater;
