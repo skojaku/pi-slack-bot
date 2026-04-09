@@ -1,0 +1,3 @@
+[submodule "paperchecker"]
+	path = paperchecker
+	url = https://github.com/skojaku/paperchecker
