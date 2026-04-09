@@ -170,6 +170,8 @@ export function createApp(config: Config): SlackApp {
     log.info("message event received", { type: event.type, subtype: "subtype" in event ? event.subtype : undefined, user: "user" in event ? event.user : undefined });
     if (!("user" in event) || !("text" in event)) return;
     if (event.subtype && event.subtype !== "file_share") return;
+    // Only handle DMs — channel messages are handled by app_mention
+    if (!event.channel.startsWith("D")) return;
 
     const channel = event.channel;
     const threadTs = ("thread_ts" in event ? event.thread_ts : undefined) ?? event.ts;
