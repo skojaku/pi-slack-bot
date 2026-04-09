@@ -4,18 +4,21 @@ services:
     restart: unless-stopped
     env_file: .env
     environment:
+      - HOME=/root
       - WORKSPACE_DIRS=/workspace
       - DEFAULT_CWD=/workspace
       - OLLAMA_HOST=http://host.docker.internal:11434
+      - PI_OFFLINE=1
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
       - /home/skojaku/projects/teams4industry:/workspace
       - pi-sessions:/root/.pi-slack-bot/sessions
       - pi-wiki:/root/.pi-slack-bot/wiki
-      - /home/skojaku/.pi/agent:/root/.pi/agent
+      - /home/skojaku/.pi:/root/.pi
       - ./models.json:/root/.pi/agent/models.json:ro
       - ./paperchecker:/app/paperchecker
+      - /home/skojaku/.ssh:/root/.ssh:ro
 
 volumes:
   pi-sessions:

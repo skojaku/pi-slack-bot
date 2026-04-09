@@ -1,7 +1,7 @@
 FROM node:20-slim
 
 # Install system deps: uv (for pi skills + paperchecker), cron, timezone data
-RUN apt-get update && apt-get install -y curl ca-certificates python3 cron tzdata && \
+RUN apt-get update && apt-get install -y curl ca-certificates python3 cron tzdata rsync git openssh-client && \
     curl -LsSf https://astral.sh/uv/install.sh | sh && \
     ln -sf /usr/share/zoneinfo/America/New_York /etc/localtime && \
     echo "America/New_York" > /etc/timezone && \
@@ -10,6 +10,8 @@ ENV PATH="/root/.local/bin:$PATH"
 ENV TZ=America/New_York
 
 WORKDIR /app
+
+RUN npm install -g @mariozechner/pi-coding-agent
 
 COPY package*.json ./
 RUN npm ci

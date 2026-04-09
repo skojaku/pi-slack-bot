@@ -7,6 +7,9 @@ MAX_TRIES=10
 
 echo "[$(date)] === paperchecker run starting ==="
 
+# Allow git operations in any directory (needed for deploy_pages.sh in Docker)
+git config --global --add safe.directory '*'
+
 # Create venv if needed and install/update dependencies
 echo "[$(date)] Installing Python dependencies..."
 [ -d "$VENV_DIR" ] || uv venv "$VENV_DIR"
@@ -19,10 +22,12 @@ set -a
 set +a
 
 cd "$PAPERCHECKER_DIR"
+# shellcheck source=/dev/null
+source "$VENV_DIR/bin/activate"
 
 for i in $(seq 1 $MAX_TRIES); do
     echo "[$(date)] Attempt $i/$MAX_TRIES..."
-    if "$VENV_DIR/bin/snakemake" --cores 1; then
+    if snakemake --cores 1; then
         echo "[$(date)] Success on attempt $i"
         exit 0
     fi
