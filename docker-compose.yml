@@ -12,8 +12,11 @@ services:
     volumes:
       - /home/skojaku/projects/teams4industry:/workspace
       - pi-sessions:/root/.pi-slack-bot/sessions
+      - pi-wiki:/root/.pi-slack-bot/wiki
       - /home/skojaku/.pi/agent:/root/.pi/agent
       - ./models.json:/root/.pi/agent/models.json:ro
+      - ./paperchecker:/app/paperchecker
 
 volumes:
   pi-sessions:
+  pi-wiki:
