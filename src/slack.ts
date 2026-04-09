@@ -25,6 +25,10 @@ import {
 } from "./cwd-picker.js";
 import { handleReaction, REACTION_MAP } from "./reactions.js";
 import { PinStore } from "./pin-store.js";
+import { createLogger } from "./logger.js";
+
+const log = createLogger("slack");
+
 export interface SlackApp {
   app: App;
   sessionManager: BotSessionManager;
@@ -74,11 +78,12 @@ export function createApp(config: Config): SlackApp {
   }
 
   app.event("message", async ({ event, client }) => {
+    log.info("message event received", { type: event.type, subtype: "subtype" in event ? event.subtype : undefined, user: "user" in event ? event.user : undefined });
     if (!("user" in event) || !("text" in event)) return;
     // Allow file_share subtype through — user uploaded a file.
     // bot_message is filtered out by the subtype check (it's not "file_share").
     if (event.subtype && event.subtype !== "file_share") return;
-    if (event.user !== config.slackUserId) return;
+    if (config.slackUserId && event.user !== config.slackUserId) return;
 
     // Refresh project list so config changes take effect immediately
     refreshProjects();
@@ -133,6 +138,20 @@ export function createApp(config: Config): SlackApp {
     }
 
     try {
+      // If a default cwd is configured, skip the picker and start immediately
+      if (config.defaultCwd) {
+        log.info("creating session with default cwd", { cwd: config.defaultCwd });
+        const session = await sessionManager.getOrCreate({
+          threadTs,
+          channelId: channel,
+          cwd: config.defaultCwd,
+        });
+        log.info("session created", { cwd: session.cwd });
+        const { text: prompt, images } = await enrichPromptWithFiles(slackFiles, text, session.cwd, config.slackBotToken);
+        log.info("enqueuing prompt", { prompt });
+        session.enqueue(() => session.prompt(prompt, { images }));
+        return;
+      }
       // Show directory browser for the user to pick a working directory
       await postCwdPicker({
         client,
@@ -144,6 +163,7 @@ export function createApp(config: Config): SlackApp {
         onSelect: onCwdSelected,
       });
     } catch (err) {
+      log.error("error handling message", { error: err });
       if (err instanceof SessionLimitError) {
         await client.chat.postMessage({
           channel,
@@ -161,8 +181,8 @@ export function createApp(config: Config): SlackApp {
   app.event("reaction_added", async ({ event, client }) => {
     // Only handle reactions on messages
     if (event.item.type !== "message") return;
-    // Only respond to the allowed user
-    if (event.user !== config.slackUserId) return;
+    // Only respond to the allowed user (if configured)
+    if (config.slackUserId && event.user !== config.slackUserId) return;
 
     const channel = event.item.channel;
     const messageTs = event.item.ts;

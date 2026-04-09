@@ -7,7 +7,7 @@ export interface Config {
   // Slack
   slackBotToken: string;
   slackAppToken: string;
-  slackUserId: string;
+  slackUserId: string | undefined;
 
   // LLM
   provider: string;
@@ -25,6 +25,7 @@ export interface Config {
 
   // cwd discovery
   workspaceDirs: string[];
+  defaultCwd: string | undefined;
 
   // Diff review
   pasteProvider: PasteProviderType;
@@ -59,7 +60,7 @@ export function loadConfig(): Config {
   return {
     slackBotToken: required("SLACK_BOT_TOKEN"),
     slackAppToken: required("SLACK_APP_TOKEN"),
-    slackUserId: required("SLACK_USER_ID"),
+    slackUserId: process.env["SLACK_USER_ID"] || undefined,
 
     provider: optional("PROVIDER", "anthropic"),
     model: optional("MODEL", "claude-sonnet-4-5"),
@@ -76,6 +77,8 @@ export function loadConfig(): Config {
       .split(",")
       .map((d) => expandHome(d.trim()))
       .filter(Boolean),
+
+    defaultCwd: process.env["DEFAULT_CWD"] ? expandHome(process.env["DEFAULT_CWD"]) : undefined,
 
     pasteProvider: parsePasteProviderType(optional("PASTE_PROVIDER", "amazon")),
   };
