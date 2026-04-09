@@ -77,38 +77,32 @@ export function createApp(config: Config): SlackApp {
     }
   }
 
-  app.event("message", async ({ event, client }) => {
-    log.info("message event received", { type: event.type, subtype: "subtype" in event ? event.subtype : undefined, user: "user" in event ? event.user : undefined });
-    if (!("user" in event) || !("text" in event)) return;
-    // Allow file_share subtype through — user uploaded a file.
-    // bot_message is filtered out by the subtype check (it's not "file_share").
-    if (event.subtype && event.subtype !== "file_share") return;
-    if (config.slackUserId && event.user !== config.slackUserId) return;
+  async function handleIncomingMessage(params: {
+    user: string;
+    text: string;
+    channel: string;
+    threadTs: string;
+    isThreadReply: boolean;
+    files: unknown[];
+    client: typeof app.client;
+  }): Promise<void> {
+    const { user, channel, threadTs, isThreadReply, client } = params;
 
-    // Refresh project list so config changes take effect immediately
+    if (config.slackUserId && user !== config.slackUserId) return;
+
     refreshProjects();
 
-    const channel = event.channel;
-    const threadTs = ("thread_ts" in event ? event.thread_ts : undefined) ?? event.ts;
-    const text = event.text ?? "";
+    const text = params.text;
 
-    // Extract any files attached to this message
-    const slackFiles: SlackFile[] = [];
-    // Slack's type for file_share events doesn't include `files` — use interface
     interface SlackEventFile { id: string; name?: string; mimetype?: string; size?: number; url_private_download?: string; url_private?: string }
-    const eventFiles = "files" in event ? (event as unknown as { files?: SlackEventFile[] }).files : undefined;
-    if (Array.isArray(eventFiles)) {
-      for (const f of eventFiles) {
-        slackFiles.push({
-          id: f.id,
-          name: f.name ?? "unknown",
-          mimetype: f.mimetype,
-          size: f.size ?? 0,
-          urlPrivateDownload: f.url_private_download,
-          urlPrivate: f.url_private,
-        });
-      }
-    }
+    const slackFiles: SlackFile[] = (params.files as SlackEventFile[]).map((f) => ({
+      id: f.id,
+      name: f.name ?? "unknown",
+      mimetype: f.mimetype,
+      size: f.size ?? 0,
+      urlPrivateDownload: f.url_private_download,
+      urlPrivate: f.url_private,
+    }));
 
     // Command detection — handle !commands before cwd parsing
     const cmd = parseCommand(text);
@@ -126,7 +120,6 @@ export function createApp(config: Config): SlackApp {
     }
 
     // Thread replies skip cwd parsing — session already exists
-    const isThreadReply = "thread_ts" in event && event.thread_ts !== undefined;
     if (isThreadReply) {
       const existing = sessionManager.get(threadTs);
       if (existing) {
@@ -134,11 +127,9 @@ export function createApp(config: Config): SlackApp {
         existing.enqueue(() => existing.prompt(prompt, { images }));
         return;
       }
-      // Thread reply but no session — fall through to create with cwd picker
     }
 
     try {
-      // If a default cwd is configured, skip the picker and start immediately
       if (config.defaultCwd) {
         log.info("creating session with default cwd", { cwd: config.defaultCwd });
         const session = await sessionManager.getOrCreate({
@@ -152,7 +143,6 @@ export function createApp(config: Config): SlackApp {
         session.enqueue(() => session.prompt(prompt, { images }));
         return;
       }
-      // Show directory browser for the user to pick a working directory
       await postCwdPicker({
         client,
         channel,
@@ -174,6 +164,47 @@ export function createApp(config: Config): SlackApp {
       }
       throw err;
     }
+  }
+
+  app.event("message", async ({ event, client }) => {
+    log.info("message event received", { type: event.type, subtype: "subtype" in event ? event.subtype : undefined, user: "user" in event ? event.user : undefined });
+    if (!("user" in event) || !("text" in event)) return;
+    if (event.subtype && event.subtype !== "file_share") return;
+
+    const channel = event.channel;
+    const threadTs = ("thread_ts" in event ? event.thread_ts : undefined) ?? event.ts;
+    const isThreadReply = "thread_ts" in event && event.thread_ts !== undefined;
+    const eventFiles = "files" in event ? (event as unknown as { files?: unknown[] }).files ?? [] : [];
+
+    await handleIncomingMessage({
+      user: event.user,
+      text: event.text ?? "",
+      channel,
+      threadTs,
+      isThreadReply,
+      files: eventFiles,
+      client,
+    });
+  });
+
+  app.event("app_mention", async ({ event, client }) => {
+    log.info("app_mention event received", { user: event.user, channel: event.channel });
+
+    const channel = event.channel;
+    const threadTs = event.thread_ts ?? event.ts;
+    const isThreadReply = !!event.thread_ts;
+    // Strip the @mention prefix from the text
+    const text = (event.text ?? "").replace(/^<@[A-Z0-9]+>\s*/, "").trim();
+
+    await handleIncomingMessage({
+      user: event.user,
+      text,
+      channel,
+      threadTs,
+      isThreadReply,
+      files: [],
+      client,
+    });
   });
 
   /* ── Reaction handler ─────────────────────────────────────────── */
