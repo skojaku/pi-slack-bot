@@ -12,6 +12,7 @@ services:
     volumes:
       - /home/skojaku/projects/teams4industry:/workspace
       - pi-sessions:/root/.pi-slack-bot/sessions
+      - /home/skojaku/.pi/agent:/root/.pi/agent
       - ./models.json:/root/.pi/agent/models.json:ro
 
 volumes:
